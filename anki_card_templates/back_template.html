@@ -1,0 +1,66 @@
+<div class="apple-container">
+    <div class="question-main">
+        {{问题}}
+    </div>
+
+    <div class="answer-main">
+        {{答案}}
+    </div>
+
+    {{#Advanced URI}}
+    <div style="margin-bottom: 20px;">
+        <a href="{{Advanced URI}}" class="ios-button">
+            Open in Obsidian
+        </a>
+    </div>
+    {{/Advanced URI}}
+
+    {{#原来的笔记}}
+    <div class="ios-card">
+        <div class="card-header">CONTEXT</div>
+        <div class="card-body">
+            {{原来的笔记}}
+        </div>
+    </div>
+    {{/原来的笔记}}
+</div>
+
+<script>
+setTimeout(() => {
+    const blockquotes = document.querySelectorAll('.card-body blockquote');
+    
+    blockquotes.forEach(bq => {
+        let html = bq.innerHTML;
+        
+        // 匹配 [!类型] 标题，忽略它被什么 HTML 标签包裹
+        // 捕获组1: 类型 (如 Note)
+        // 捕获组2: 标题 (如 Anki)
+        const regex = /\[!([a-zA-Z0-9_-]+)\]([^<]*)/;
+        const match = html.match(regex);
+        
+        if (match) {
+            const type = match[1].trim();
+            const title = match[2].trim() || type; // 如果没写标题，就用类型名
+            
+            // 把第一行（匹配到的 [!类型] 标题）从原本的 HTML 中删掉
+            let contentHtml = html.replace(match[0], '').trim();
+            
+            // 清理紧跟在标题后面的换行标签 (处理 Anki 随机生成的 <br> 或 <div>)
+            contentHtml = contentHtml.replace(/^(?:\s*<br\s*\/?>\s*|<div>\s*<br\s*\/?>\s*<\/div>\s*|<p>\s*<br\s*\/?>\s*<\/p>\s*)+/gi, '');
+
+            // 创建符合 iOS 风格的 Callout 容器
+            const calloutDiv = document.createElement('div');
+            calloutDiv.className = `ios-callout ios-callout-${type.toLowerCase()}`;
+            
+            // 组装最终的 HTML
+            calloutDiv.innerHTML = `
+                <div class="ios-callout-title">${title}</div>
+                <div class="ios-callout-content">${contentHtml}</div>
+            `;
+            
+            // 替换原有的 blockquote
+            bq.parentNode.replaceChild(calloutDiv, bq);
+        }
+    });
+}, 0);
+</script>

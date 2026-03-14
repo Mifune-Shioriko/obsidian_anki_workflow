@@ -1,0 +1,183 @@
+/* --- 全局重置与字体 (Apple System Style) --- */
+.card {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    /* 核心修改：设定统一的基础字号，后续所有元素继承此大小 */
+    font-size: 17px; 
+    line-height: 1.6;
+    text-align: left; /* 强制左对齐 */
+    -webkit-font-smoothing: antialiased;
+    
+    /* 默认背景色（跟随系统） */
+    height: 100%;
+}
+
+/* --- 布局容器 (解决对齐问题) --- */
+.apple-container {
+    max-width: 640px;
+    margin: 0 auto; /* 水平居中 */
+    padding: 40px 20px; /* 上下留白 */
+}
+
+/* --- 1. 问题 (Question) - 保持默认大小 --- */
+.question-main {
+    font-size: 1em; /* 跟随基础字号 (17px) */
+    font-weight: 600; /* 加粗一点点，区分层级 */
+    color: var(--text-fg); /* 跟随系统文字颜色 */
+    margin-bottom: 20px;
+    border-bottom: 1px solid rgba(127, 127, 127, 0.1); /* 加个极淡的分割线 */
+    padding-bottom: 20px;
+}
+
+/* 背面回顾问题时的样式 (稍微变灰，但大小不变) */
+.question-review .question-main {
+    color: gray;
+    border-bottom: none; /* 背面不需要分割线，因为下面紧接答案 */
+    margin-bottom: 10px;
+    padding-bottom: 0;
+}
+
+/* --- 2. 答案 (Answer) - 保持默认大小 --- */
+.answer-main {
+    font-size: 1em; /* 跟随基础字号 (17px) */
+    font-weight: 400; /* 正常粗细 */
+    margin-bottom: 40px;
+}
+
+/* --- 3. 上下文卡片 (唯一变色的区域) --- */
+.ios-card {
+    background-color: #1c1c1e; /* 强制深灰底 */
+    color: #f5f5f7; /* 强制白字 */
+    border-radius: 12px;
+    padding: 20px;
+    margin-top: 20px;
+}
+
+/* --- 4. CONTEXT 小标签 (唯一变小的字) --- */
+.card-header {
+    font-size: 12px; /* 这里是唯一变小的地方 */
+    font-weight: 700;
+    color: #86868b;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+}
+
+/* --- 5. 内容排版微调 --- */
+.card-body {
+    font-size: 1em; /* 保持一致 */
+    line-height: 1.6;
+}
+
+/* Markdown 元素适配 */
+.card-body h1, .card-body h2 { font-size: 1.1em; font-weight: bold; margin: 1em 0; color: white;}
+.card-body code { font-family: monospace; background: rgba(255,255,255,0.1); padding: 2px 5px; border-radius: 4px; color: #ff9f0a; }
+.card-body pre { background: black; padding: 10px; border-radius: 8px; overflow-x: auto; border: 1px solid #333; }
+.card-body blockquote { border-left: 3px solid #7b68ee; margin: 10px 0; padding-left: 10px; color: #aaa; }
+
+/* --- 6. 按钮样式 --- */
+.ios-button {
+    display: inline-flex;
+    align-items: center;
+    padding: 8px 16px;
+    background-color: #7b68ee;
+    color: white;
+    border-radius: 20px;
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 600;
+}
+.nightMode .ios-card { border: 1px solid #333; }
+
+/* --- 7. Obsidian Callout 样式适配 --- */
+.ios-callout {
+    background-color: rgba(123, 104, 238, 0.1); /* 呼应你原有的紫色主题色 #7b68ee */
+    border: 1px solid rgba(123, 104, 238, 0.3);
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin: 16px 0;
+}
+
+/* 修改标题，减小下边距 */
+.ios-callout-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #7b68ee;
+    margin-bottom: 4px; /* 从 6px 改成 4px，让标题更贴近正文 */
+    text-transform: capitalize;
+    display: flex;
+    align-items: center;
+}
+
+/* === 新增：专门对付 Anki “幽灵空行和边距” === */
+/* 隐藏 Anki 可能塞在内容最前面的孤立换行符 */
+.ios-callout-content > br:first-child {
+    display: none !important;
+}
+
+/* 强制消除 Anki 自动生成的首尾段落边距 */
+.ios-callout-content > p:first-child,
+.ios-callout-content > div:first-child {
+    margin-top: 0 !important;
+}
+.ios-callout-content > p:last-child,
+.ios-callout-content > div:last-child {
+    margin-bottom: 0 !important;
+}
+
+.ios-callout-content {
+    font-size: 0.95em;
+    line-height: 1.6;
+    color: #e5e5ea; /* 适配你的深灰色背景卡片文字 */
+}
+
+/* 如果你的笔记中还有其他类型的 Callout，可以在这里单独定义颜色 */
+/* 比如 [!warning] 或 [!important] */
+.ios-callout-warning {
+    background-color: rgba(255, 159, 10, 0.1); /* 借用你代码块文字的橙色 #ff9f0a */
+    border-color: rgba(255, 159, 10, 0.3);
+}
+.ios-callout-warning .ios-callout-title {
+    color: #ff9f0a;
+}
+
+/* --- 8. 学术三线表样式 (Academic Three-Line Table) --- */
+.card-body table {
+    width: 100%;
+    border-collapse: collapse; /* 核心：合并边框以消除默认间隙 */
+    margin: 20px 0;
+    font-size: 0.95em;
+}
+
+/* 第一线和第三线：表格的顶部和底部粗线 */
+.card-body table {
+    border-top: 2px solid rgba(255, 255, 255, 0.8);
+    border-bottom: 2px solid rgba(255, 255, 255, 0.8);
+}
+
+/* 第二线：表头下方的标准线 */
+.card-body th {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.5);
+    padding: 10px 12px;
+    font-weight: 600;
+    color: #f5f5f7; /* 强制表头文字颜色 */
+    text-align: left;
+}
+
+/* 单元格内容区域：去除所有自带边框 */
+.card-body td {
+    padding: 10px 12px;
+    border: none;
+    color: #e5e5ea;
+}
+
+/* 消除部分 Markdown 解析器可能会为 tbody 自动加的底边框 */
+.card-body tbody {
+    border: none;
+}
+
+/* 偶数行背景微调（可选）：如果你的表格数据很长，三线表容易看串行。
+   虽然严格的学术三线表没有底色，但在背诵卡片中加一点极暗的斑马纹会提升阅读体验。
+   如果不喜欢，可以删除下面这段。 */
+.card-body tbody tr:nth-child(even) {
+    background-color: rgba(255, 255, 255, 0.03);
+}
