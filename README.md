@@ -1,51 +1,58 @@
-# Obsidian-Anki AI Workflow
+# Obsidian-Anki AI Integration Workflow
 
-基于 Google Gemini API 的个人知识管理自动化工具集。这套脚本旨在实现从“每日笔记”到“原子化知识”，再到“Anki 记忆卡片”的无缝、自动化流转。
+This is a Personal Knowledge Management (PKM) automation workflow project based on Python and Large Language Models (Google Gemini). It deeply integrates Obsidian, Anki, and a Multi-Agent System to provide an all-in-one learning solution—from daily note-taking and atomic note splitting to automated flashcard generation, spaced repetition, intelligent Q&A, and homework solving.
 
-## 核心功能 (Scripts)
+## ✨ Core Features
 
-本项目包含四个独立但可协同工作的 Python 脚本：
+*   **🔄 Two-way Synchronization (`sync.py`)**
+    *   Synchronizes cards between Obsidian (Atomic Notes folder) and Anki.
+    *   Relies on AnkiConnect, using Obsidian Advanced URI to establish back-links, making it easy to jump back to the original note during reviews.
+*   **🧠 Daily Note Auto-Splitting (`daily_to_atomic.py`)**
+    *   Integrates with the Gemini LLM to automatically scan Obsidian Daily Notes.
+    *   Uses AI to extract and refine long diary entries, automatically splitting them into clear, concise "Atomic Notes".
+*   **🤖 Multi-Agent Routing System (`router.py` & `agents/`)**
+    *   An extensible AI agent dispatch system that dynamically loads various capability plugins from the `agents/` directory.
+    *   Built-in capabilities include (but are not limited to): PubMed academic literature search, note tagging (`tag.py`), content revision (`revise.py`), reading suggestions (`reading_suggestions.py`), etc.
+*   **📚 Intelligent Homework Solver (`solve_hw.py`)**
+    *   Supports reading PDF documents (via PyMuPDF) or text content.
+    *   Utilizes the Gemini API to analyze homework questions and provide highly concise and accurate mathematical or subject-specific answers.
 
-- **`daily_to_atomic.py`**：自动扫描当天的“Daily Notes”，提取底部的草稿/随记内容，调用 AI 自动生成合适的标题，并将其转化为独立的原子笔记 (Atomic Notes)，同时在原日记中留下双链。
-- **`main.py`**：核心制卡引擎。读取指定的 Obsidian 笔记，根据预设的 Prompt 提取核心知识点，生成精炼的问答卡片，并自动写入 Anki 及原笔记的 Markdown 表格中。支持处理数学公式与图片。
-- **`sync.py`**：全量扫描原子笔记目录，对比 Obsidian 与 Anki 中的卡片状态。支持双向内容更新、废弃卡片清理以及缺失卡片的补录，确保两端数据绝对一致。（以 Obsidian 中保存的数据为准）
-- **`answer.py`**：AI 问答助手。读取当前日记中的对话上下文（支持双链引用和图片解析），调用 Gemini 生成排版规范的回答，并自动追加到笔记末尾。
+## ⚙️ Configuration & Installation
 
-## 环境准备 (Prerequisites)
+1.  **Clone the project**
+    ```bash
+    git clone https://github.com/Mifune-Shioriko/obsidian_anki_workflow.git
+    cd obsidian_anki_workflow
+    ```
 
-1. **Python 3.x**
-2. **Obsidian 插件**：需安装并启用 [Advanced URI](https://github.com/Vinzent03/obsidian-advanced-uri)（用于 Anki 回跳 Obsidian）。
-3. **Anki 插件**：需安装并启用 [AnkiConnect](https://ankiweb.net/shared/info/2055492159)（确保 Anki 处于打开状态）。
-4. **API 密钥**：需要申请 [Google Gemini API Key](https://aistudio.google.com/)。
+2.  **Install dependencies**
+    Python 3.10+ is recommended. Install the required dependencies:
+    ```bash
+    pip install google-genai pymupdf requests markdown python-dotenv
+    ```
+    *(Note: For Anki integration, ensure AnkiConnect is installed in Anki, and keep Anki running in the background)*
 
-## 快速开始 (Getting Started)
+3.  **Configure environment variables**
+    Create a `.env` file in the project root (refer to `.env.example`) and fill in the key configurations:
+    ```ini
+    GOOGLE_API_KEY="your_gemini_api_key_here"
+    VAULT_DIR="/path/to/your/obsidian/vault"
+    ANKI_URL="http://127.0.0.1:8765"
+    ANKI_DECK_NAME="Obsidian"
+    ANKI_NOTE_TYPE="Obsidian"
+    OBSIDIAN_VAULT_NAME="my_obsidian_notes"
+    ```
 
-### 1. 克隆仓库
+## 🚀 Common Commands
 
-```bash
-git clone [https://github.com/Mifune-Shioriko/obsidian_anki_workflow.git](https://github.com/Mifune-Shioriko/obsidian_anki_workflow.git)
-cd obsidian_anki_workflow
+*   **Sync to Anki:** `python sync.py`
+*   **Process Daily Notes:** `python daily_to_atomic.py`
+*   **Solve Homework:** `python solve_hw.py [args]`
+*   **Call a specific Agent:** `python router.py` (Depends on your specific configuration)
 
-```
+## 📁 Directory Structure
 
-### 2. 安装依赖
-
-建议使用虚拟环境，然后安装所需的 Python 库：
-
-```bash
-pip install google-genai python-dotenv requests markdown pydantic
-
-```
-
-### 3. 配置环境变量
-
-复制根目录下的配置模板，并填入你自己的绝对路径和 API Key：
-
-```bash
-cp .env.example .env
-
-```
-
-用你喜欢的编辑器打开 `.env`，补全 `GOOGLE_API_KEY` 和 `VAULT_DIR`（你的 Obsidian 仓库本地绝对路径）。
-
-
+*   `agents/`: Contains various AI agent scripts (e.g., `pubmed.py`, `file.py`).
+*   `anki_card_templates/`: HTML and CSS styling files for Anki cards.
+*   `agent_tools.py`: Provides common tool wrappers (e.g., web search capabilities) for the agents.
+*   `utils.py`: Common utility functions library for the project.
