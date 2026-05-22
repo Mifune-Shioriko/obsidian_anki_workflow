@@ -131,7 +131,12 @@ def render_markdown_safely(text, add_spacing=False):
 
 def convert_to_html(text):
     if not text: return ""
-    if "## 卡片" in text:
+    
+    # 优先移除 ## 相关笔记 及其后续的所有段落（包括 ## 卡片）
+    related_match = re.search(r'^##\s*(?:相关笔记|Related\s+Notes)\s*$', text, re.MULTILINE | re.IGNORECASE)
+    if related_match:
+        text = text[:related_match.start()].strip()
+    elif "## 卡片" in text:
         text = text.split("## 卡片")[0].strip()
         
     # 移除 YAML Frontmatter

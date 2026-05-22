@@ -5,11 +5,12 @@ import os
 import re
 import json
 import time
+import subprocess
 
 client = genai.Client(api_key=utils.GOOGLE_API_KEY)
 
 SYSTEM_PROMPT_BASE = """你现在的角色是类似于 NotebookLM 的智能学习助教。
-系统会向你提供一份或多份 PDF 文档（如课件、书籍等）作为你的专属知识库。
+系统会向你提供一份或多份文档（如 PDF、PPTX 课件、书籍等）作为你的专属知识库。
 请仔细阅读这些提供的文档内容，并在回答问题时遵守以下原则：
 
 1. **基于文档回答**：优先使用文档中的信息回答问题。如果用户的提问超出了文档范围，请明确指出“文档中未提及此内容”，然后再根据你的基础知识进行补充解答。
@@ -36,9 +37,9 @@ def save_cache(cache):
     except Exception as e:
         print(f"Warning: Failed to save cache: {e}")
 
-def get_or_upload_pdf(pdf_path):
+def get_or_upload_file(file_path):
     cache = load_cache()
-    abs_path = os.path.abspath(pdf_path)
+    abs_path = os.path.abspath(file_path)
     if not os.path.exists(abs_path):
         return None
 
@@ -58,11 +59,35 @@ def get_or_upload_pdf(pdf_path):
                 print(f"🔄 缓存失效，正在重新上传: {original_name}")
         else:
             print(f"🔄 文件已修改，正在重新上传: {original_name}")
+            
+    upload_path = abs_path
+    if abs_path.lower().endswith('.pptx'):
+        print(f"⚙️  正在将 PPTX 转换为 PDF: {original_name}")
+        tmp_dir = os.path.join(os.path.dirname(CACHE_FILE), ".pptx_cache")
+        os.makedirs(tmp_dir, exist_ok=True)
+        
+        pdf_name = os.path.splitext(original_name)[0] + f"_{int(mtime)}.pdf"
+        pdf_path = os.path.join(tmp_dir, pdf_name)
+        
+        if not os.path.exists(pdf_path):
+            try:
+                subprocess.run(
+                    ['soffice', '--headless', '--convert-to', 'pdf', abs_path, '--outdir', tmp_dir],
+                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+                output_pdf = os.path.join(tmp_dir, os.path.splitext(original_name)[0] + ".pdf")
+                if os.path.exists(output_pdf) and output_pdf != pdf_path:
+                    os.rename(output_pdf, pdf_path)
+            except Exception as e:
+                print(f"❌ 转换 PPTX 失败: {e}")
+                return None
+                
+        upload_path = pdf_path
     else:
         print(f"📤 正在上传: {original_name}")
         
     try:
-        uploaded = client.files.upload(file=abs_path)
+        uploaded = client.files.upload(file=upload_path)
         
         while uploaded.state.name == 'PROCESSING':
             print('.', end='', flush=True)
@@ -70,7 +95,7 @@ def get_or_upload_pdf(pdf_path):
             uploaded = client.files.get(name=uploaded.name)
             
         if uploaded.state.name == 'FAILED':
-            print(f"❌ 文件处理失败: {abs_path}")
+            print(f"❌ 文件处理失败: {upload_path}")
             return None
 
         print(f"✅ 上传完成: {original_name} ({uploaded.name})")
@@ -108,18 +133,18 @@ def extract_existing_paths(text):
             
     return valid_paths
 
-def gather_pdfs_from_paths(paths):
-    pdf_files = set()
+def gather_files_from_paths(paths):
+    doc_files = set()
     for p in paths:
         if os.path.isfile(p):
-            if p.lower().endswith('.pdf'):
-                pdf_files.add(p)
+            if p.lower().endswith(('.pdf', '.pptx')):
+                doc_files.add(p)
         elif os.path.isdir(p):
             for root, dirs, files in os.walk(p):
                 for file in files:
-                    if file.lower().endswith('.pdf'):
-                        pdf_files.add(os.path.join(root, file))
-    return list(pdf_files)
+                    if file.lower().endswith(('.pdf', '.pptx')):
+                        doc_files.add(os.path.join(root, file))
+    return list(doc_files)
 
 def handle(command, history, note_path, full_content):
     all_chat_text = ""
@@ -130,19 +155,19 @@ def handle(command, history, note_path, full_content):
             elif not isinstance(part, dict) and hasattr(part, 'text') and getattr(part, 'text', None):
                 all_chat_text += getattr(part, 'text') + "\n"
                 
-    # 提取所有存在的路径并找寻 PDF
+    # 提取所有存在的路径并找寻文档
     valid_paths = extract_existing_paths(all_chat_text)
-    pdf_files = gather_pdfs_from_paths(valid_paths)
+    doc_files = gather_files_from_paths(valid_paths)
     
-    # 防止加载过多 PDF
-    if len(pdf_files) > 15:
-        return f"❌ 找到的 PDF 文件过多 ({len(pdf_files)} 个)，为了避免超出大模型的上下文限制，请指定更精确的路径或单个文件。"
+    # 防止加载过多文档
+    if len(doc_files) > 15:
+        return f"❌ 找到的文件过多 ({len(doc_files)} 个)，为了避免超出大模型的上下文限制，请指定更精确的路径或单个文件。"
         
     uploaded_files = []
-    if pdf_files:
-        print(f"🔍 找到 {len(pdf_files)} 个相关 PDF，准备加载...")
-        for pdf in pdf_files:
-            file_info = get_or_upload_pdf(pdf)
+    if doc_files:
+        print(f"🔍 找到 {len(doc_files)} 个相关文档，准备加载...")
+        for doc in doc_files:
+            file_info = get_or_upload_file(doc)
             if file_info:
                 uploaded_files.append(file_info)
 
@@ -174,16 +199,16 @@ def handle(command, history, note_path, full_content):
                 typed_parts.append(p)
         typed_history.append(types.Content(role=turn["role"], parts=typed_parts))
 
-    # 在最后一次提问的 parts 中追加 PDF 上下文
+    # 在最后一次提问的 parts 中追加文档上下文
     if uploaded_files:
-        pdf_parts = []
+        doc_parts = []
         for info in uploaded_files:
-            pdf_parts.append(types.Part.from_text(text=f"--- 下面是名为 {info.get('original_name', '未知文档')} 的文档内容 ---"))
-            pdf_parts.append(types.Part.from_uri(file_uri=info['uri'], mime_type=info['mime_type']))
-            pdf_parts.append(types.Part.from_text(text=f"--- 文档结束 ---"))
+            doc_parts.append(types.Part.from_text(text=f"--- 下面是名为 {info.get('original_name', '未知文档')} 的文档内容 ---"))
+            doc_parts.append(types.Part.from_uri(file_uri=info['uri'], mime_type=info['mime_type']))
+            doc_parts.append(types.Part.from_text(text=f"--- 文档结束 ---"))
             
-        # 将 PDF parts 插在用户实际提问的前面
-        typed_history[-1].parts = pdf_parts + typed_history[-1].parts
+        # 将文档 parts 插在用户实际提问的前面
+        typed_history[-1].parts = doc_parts + typed_history[-1].parts
 
     # 追加提取到的图片
     for img_path in linked_images:

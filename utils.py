@@ -99,6 +99,12 @@ def parse_document(file_content):
             context_header = ""
             chat_content = main_body
             
+    # 过滤掉 context_header 中可能存在的相关笔记，防止污染 AI 问答上下文
+    if context_header:
+        related_match = re.search(r'^##\s*(?:相关笔记|Related\s+Notes)\s*$', context_header, re.MULTILINE | re.IGNORECASE)
+        if related_match:
+            context_header = context_header[:related_match.start()].strip()
+            
     return full_header, context_header, chat_content, cards_body
 
 def parse_markdown_to_history(chat_content):

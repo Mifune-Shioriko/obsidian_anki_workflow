@@ -75,5 +75,12 @@
     "mime_type": "application/pdf",
     "mtime": 1773376679.9920075,
     "original_name": "GP2_HW2.pdf"
+  },
+  "/home/shioriko/Share/School/2025_2026_2/biochem_2nd/slides/11_rna.pptx": {
+    "name": "files/x6ysxm2h3ulh",
+    "uri": "https://generativelanguage.googleapis.com/v1beta/files/x6ysxm2h3ulh",
+    "mime_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "mtime": 1778738954.232065,
+    "original_name": "11_rna.pptx"
   }
 }
