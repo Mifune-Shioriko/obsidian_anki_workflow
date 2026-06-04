@@ -103,7 +103,7 @@ def render_markdown_safely(text, add_spacing=False):
     # 核心修复：占位符绝对不能包含下划线(_)或星号(*)等 Markdown 保留字
     def block_math_repl(match):
         key = f"MATHBLOCKPLACEHOLDER{len(math_placeholders)}K"
-        # 直接使用标准的 Anki 块级公式语法 \\[ ... \]
+        # 直接使用标准的 Anki 块级公式语法 \[ ... \]
         math_placeholders[key] = f"\\[{match.group(1)}\\]"
         return key
 
@@ -206,34 +206,26 @@ def rewrite_markdown_table(file_path, original_content, updated_cards):
     with open(file_path, 'w', encoding='utf-8') as f:
         f.write(final_content)
 
-# --- 核心增量同步引擎 ---
+# --- 核心同步引擎 ---
 
-def sync_single_note(file_path):
-    content = load_file(file_path)
-    if not content:
-        print(f"错误：无法读取文件 {file_path}")
+def sync_notes():
+    if not os.path.exists(TARGET_FULL_PATH):
+        print(f"错误：找不到文件夹 {TARGET_FULL_PATH}")
         return
 
-    note_id = extract_id_from_yaml(content)
-    if not note_id:
-        print(f"错误：未在 YAML Frontmatter 中检测到 id 字段: {file_path}")
-        return
-
-    print(f"正在从 Anki 载入笔记 ID {note_id} 的卡片信息...")
-    source_uri = f"obsidian://advanced-uri?vault={quote(VAULT_NAME)}&uid={quote(note_id)}"
-    
-    # 构造高精度查询条件
-    query = f'"{SEARCH_FIELD}:*uid={quote(note_id)}*"'
-    
-    existing_notes_info = []
+    print("正在从 Anki 预载入所有已同步的卡片信息...")
+    anki_notes_by_uid = {}
     try:
-        all_script_notes = invoke("findNotes", query=query)
+        # 1. 查找所有通过本系统生成的 Anki 卡片
+        all_script_notes = invoke("findNotes", query=f'"{SEARCH_FIELD}:obsidian://advanced-uri*"' )
         if all_script_notes:
+            # 2. 批量获取这些卡片的详细字段与信息
             all_notes_info = invoke("notesInfo", notes=all_script_notes)
             for info in all_notes_info:
                 fields = info.get("fields", {})
                 uri_field = fields.get(SEARCH_FIELD, {}).get("value", "")
                 
+                # 过滤并提取属于当前库的卡片，使用 html.unescape 处理 HTML 实体转义
                 uri_clean = html.unescape(uri_field)
                 match_uid = re.search(r'uid=([^&"]+)', uri_clean)
                 match_vault = re.search(r'vault=([^&"]+)', uri_clean)
@@ -242,92 +234,129 @@ def sync_single_note(file_path):
                     note_uid = unquote(match_uid.group(1))
                     vault_name = unquote(match_vault.group(1))
                     
-                    if vault_name == VAULT_NAME and note_uid == note_id:
-                        existing_notes_info.append(info)
-            print(f"载入成功！从 Anki 找到该笔记的 {len(existing_notes_info)} 张卡片。")
+                    if vault_name == VAULT_NAME:
+                        if note_uid not in anki_notes_by_uid:
+                            anki_notes_by_uid[note_uid] = []
+                        anki_notes_by_uid[note_uid].append(info)
+            print(f"预载成功！共加载来自 Anki 的 {len(all_script_notes)} 张卡片（属于当前库 {VAULT_NAME} 的有 {sum(len(v) for v in anki_notes_by_uid.values())} 张）。")
     except Exception as e:
-        print(f"警告：从 Anki 加载卡片数据失败: {e}。将退回到空数据继续同步。")
+        print(f"警告：从 Anki 预加载卡片数据失败: {e}。将退回到空数据继续同步。")
 
-    obsidian_cards = parse_markdown_table(content)
-    anki_ids = [info['noteId'] for info in existing_notes_info]
+    print(f"正在扫描文件夹: {TARGET_FOLDER_NAME} ...")
+    active_obsidian_notes = set()
     
-    if not anki_ids and not obsidian_cards:
-        print("提示：在 Obsidian 和 Anki 中均未发现该笔记的任何卡片。无需同步。")
-        return
-
-    obsidian_known_ids = [int(c['id']) for c in obsidian_cards if c['id']]
-    
-    # 1. 删除不再存在于 Markdown 表格中的 Anki 卡片
-    ids_to_delete = [i for i in anki_ids if i not in obsidian_known_ids]
-    if ids_to_delete:
-        invoke("deleteNotes", notes=ids_to_delete)
-        print(f"[删除] 从 Anki 移除了 {len(ids_to_delete)} 张废弃卡片。")
-
-    table_needs_rewrite = False
-    anki_cards_data = {info['noteId']: info for info in existing_notes_info if isinstance(info, dict) and 'noteId' in info}
-
-    new_html_context = convert_to_html(content)
-
-    # 2. 更新和新增卡片
-    for card in obsidian_cards:
-        obsidian_q_anki_format = convert_qa_to_html(card['question'])
-        obsidian_a_anki_format = convert_qa_to_html(card['answer'])
-
-        nid = int(card['id']) if card['id'] and card['id'].isdigit() else None
-        if nid and nid in anki_cards_data:
-            current_fields = anki_cards_data[nid].get("fields", {})
+    for root, dirs, files in os.walk(TARGET_FULL_PATH):
+        for file in files:
+            if not file.endswith(".md"): continue
             
-            current_q_anki = current_fields.get("问题", {}).get("value", "")
-            current_a_anki = current_fields.get("答案", {}).get("value", "")
-            current_ctx = current_fields.get(UPDATE_FIELD, {}).get("value", "")
+            file_path = os.path.join(root, file)
+            content = load_file(file_path)
+            if not content: continue
             
-            updates = {}
-            if current_q_anki != obsidian_q_anki_format: updates["问题"] = obsidian_q_anki_format
-            if current_a_anki != obsidian_a_anki_format: updates["答案"] = obsidian_a_anki_format
-            if current_ctx != new_html_context: updates[UPDATE_FIELD] = new_html_context
+            note_id = extract_id_from_yaml(content)
+            if not note_id: continue
+
+            # 核心优化：如果笔记本身根本没有“## 卡片”标记，代表没有制卡需求，直接跳过处理，大幅节省正则与转换开销
+            if "## 卡片" not in content:
+                continue
+
+            print(f"\n--- 处理笔记: {file} ---")
+            source_uri = f"obsidian://advanced-uri?vault={quote(VAULT_NAME)}&uid={quote(note_id)}"
+            new_html_context = convert_to_html(content)
+
+            obsidian_cards = parse_markdown_table(content)
             
-            if updates:
-                invoke("updateNoteFields", note={"id": nid, "fields": updates})
-                print(f"[更新] 更新了卡片 ID {nid} 的字段: {list(updates.keys())}")
+            if obsidian_cards:
+                active_obsidian_notes.add(note_id)
+            
+            # 核心优化：直接从内存数据库中读取已有的 card id 列表，无需再通过网络 findNotes
+            existing_notes_info = anki_notes_by_uid.get(note_id, [])
+            anki_ids = [info['noteId'] for info in existing_notes_info]
+            
+            if not anki_ids and not obsidian_cards:
+                continue
+
+            obsidian_known_ids = [int(c['id']) for c in obsidian_cards if c['id']]
+            
+            ids_to_delete = [i for i in anki_ids if i not in obsidian_known_ids]
+            if ids_to_delete:
+                invoke("deleteNotes", notes=ids_to_delete)
+                print(f"[删除] 从 Anki 移除了 {len(ids_to_delete)} 张废弃卡片。")
+                
+            table_needs_rewrite = False
+
+            # 直接构建 anki_cards_data，无需网络 notesInfo 请求
+            anki_cards_data = {}
+            for info in existing_notes_info:
+                if isinstance(info, dict) and 'noteId' in info and 'fields' in info:
+                    anki_cards_data[info['noteId']] = info
+
+            for card in obsidian_cards:
+                # 使用新的 HTML 转换函数渲染问题和答案
+                obsidian_q_anki_format = convert_qa_to_html(card['question'])
+                obsidian_a_anki_format = convert_qa_to_html(card['answer'])
+
+                nid = int(card['id']) if card['id'] and card['id'].isdigit() else None
+                if nid and nid in anki_cards_data:
+                    # 加上 .get("fields", {}) 拿到字段
+                    current_fields = anki_cards_data[nid].get("fields", {})
+                    
+                    current_q_anki = current_fields.get("问题", {}).get("value", "")
+                    current_a_anki = current_fields.get("答案", {}).get("value", "")
+                    current_ctx = current_fields.get(UPDATE_FIELD, {}).get("value", "")
+                    
+                    # 直接对 HTML 代码进行比对，不再进行反向 Markdown 解析
+                    updates = {}
+                    if current_q_anki != obsidian_q_anki_format: updates["问题"] = obsidian_q_anki_format
+                    if current_a_anki != obsidian_a_anki_format: updates["答案"] = obsidian_a_anki_format
+                    if current_ctx != new_html_context: updates[UPDATE_FIELD] = new_html_context
+                    
+                    if updates:
+                        invoke("updateNoteFields", note={"id": nid, "fields": updates})
+                        print(f"[更新] 更新了卡片 ID {nid} 的字段: {list(updates.keys())}")
+                else:
+                    new_note = {
+                        "deckName": DECK_NAME,
+                        "modelName": NOTE_TYPE,
+                        "fields": {
+                            "问题": obsidian_q_anki_format,
+                            "答案": obsidian_a_anki_format,
+                            "Advanced URI": source_uri,
+                            UPDATE_FIELD: new_html_context
+                        },
+                        "options": {"allowDuplicate": False},
+                        "tags": ["ObsidianAPI", "ManualSync"]
+                    }
+                    try:
+                        new_id_res = invoke("addNotes", notes=[new_note])
+                        if new_id_res and new_id_res[0]:
+                            card['id'] = str(new_id_res[0])
+                            table_needs_rewrite = True
+                            print(f"[新增] 成功添加手动卡片，获得 ID {card['id']}")
+                    except Exception as e:
+                        print(f"[错误] 添加新卡片失败: {e}")
+
+            if table_needs_rewrite:
+                rewrite_markdown_table(file_path, content, obsidian_cards)
+                print(f"[保存] 已更新 Markdown 表格（ID 或 挂起标签）: {file}")
+
+    # 扫描结束后的全局孤儿卡片清理
+    print("\n--- 全局清理孤儿卡片 ---")
+    try:
+        # 核心优化：由于我们在最开始已经获取了所有的 notesInfo，直接在内存中比对，无需再次调用 API！
+        global_ids_to_delete = []
+        for note_uid, infos in anki_notes_by_uid.items():
+            if note_uid not in active_obsidian_notes:
+                for info in infos:
+                    global_ids_to_delete.append(info["noteId"])
+                        
+        if global_ids_to_delete:
+            invoke("deleteNotes", notes=global_ids_to_delete)
+            print(f"[全局清理] 成功移除了 {len(global_ids_to_delete)} 张孤儿卡片（对应的 Obsidian 笔记已被删除或移除卡片区）。")
         else:
-            new_note = {
-                "deckName": DECK_NAME,
-                "modelName": NOTE_TYPE,
-                "fields": {
-                    "问题": obsidian_q_anki_format,
-                    "答案": obsidian_a_anki_format,
-                    "Advanced URI": source_uri,
-                    UPDATE_FIELD: new_html_context
-                },
-                "options": {"allowDuplicate": False},
-                "tags": ["ObsidianAPI", "ManualSync"]
-            }
-            try:
-                new_id_res = invoke("addNotes", notes=[new_note])
-                if new_id_res and new_id_res[0]:
-                    card['id'] = str(new_id_res[0])
-                    table_needs_rewrite = True
-                    print(f"[新增] 成功添加手动卡片，获得 ID {card['id']}")
-            except Exception as e:
-                print(f"[错误] 添加新卡片失败: {e}")
-
-    if table_needs_rewrite:
-        rewrite_markdown_table(file_path, content, obsidian_cards)
-        print(f"[保存] 已更新 Markdown 表格（ID）：{os.path.basename(file_path)}")
+            print("[全局清理] 未发现孤儿卡片，状态健康。")
+    except Exception as e:
+        print(f"[全局清理] 检查孤儿卡片时发生错误: {e}")
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("错误：请提供笔记的绝对路径作为参数。")
-        print("用法：python sync_single.py <absolute_file_path>")
-        sys.exit(1)
-        
-    file_path = sys.argv[1]
-    if not os.path.isabs(file_path):
-        print(f"错误：路径必须是绝对路径：{file_path}")
-        sys.exit(1)
-        
-    if not os.path.exists(file_path):
-        print(f"错误：找不到文件：{file_path}")
-        sys.exit(1)
-        
-    sync_single_note(file_path)
+    sync_notes()
