@@ -37,7 +37,7 @@ def main():
         full_content = f.read()
 
     # 1. 解析基础文档结构
-    full_header, context_header, chat_content, cards_body = utils.parse_document(full_content)
+    full_header, context_header, chat_content, related_body, cards_body = utils.parse_document(full_content)
     if not chat_content.strip(): 
         print("Error: chat_content is empty.")
         sys.exit(1)
@@ -64,14 +64,25 @@ def main():
 
     # 3. 路由识别与指令清理
     last_user_text = history[-1]["parts"][0]["text"].strip()
-    route_match = re.match(r'^@(\w+)(?:\s+(.*))?$', last_user_text, re.DOTALL)
+    
+    # 优先匹配开头为 @agent 的指令 (如: @explain xxx)
+    route_match_start = re.match(r'^@(\w+)(?:\s+(.*))?$', last_user_text, re.DOTALL)
+    # 其次匹配结尾为 @agent 的指令 (如: xxx\n@explain)
+    route_match_end = re.search(r'^(.*?)\s*@(\w+)\s*$', last_user_text, re.DOTALL)
     
     agent_name = "default"
     command_text = ""
     
-    if route_match:
-        agent_name = route_match.group(1)
-        command_text = route_match.group(2) or ""
+    if route_match_start:
+        agent_name = route_match_start.group(1)
+        command_text = route_match_start.group(2) or ""
+        if not command_text.strip():
+            command_text = "请继续执行"
+        # 清理用户提问中的 @agent 指令，避免干扰 AI
+        history[-1]["parts"][0]["text"] = command_text
+    elif route_match_end:
+        agent_name = route_match_end.group(2)
+        command_text = route_match_end.group(1) or ""
         if not command_text.strip():
             command_text = "请继续执行"
         # 清理用户提问中的 @agent 指令，避免干扰 AI
@@ -107,11 +118,11 @@ def main():
             # 重新读取文件，因为 Agent（如 addnew, revise）可能已经更新了底部的卡片表格
             with open(note_path, 'r', encoding='utf-8-sig') as f:
                 new_full_content = f.read()
-            _, _, _, new_cards_body = utils.parse_document(new_full_content)
+            _, _, _, _, new_cards_body = utils.parse_document(new_full_content)
             
             # 格式化清洗（比如处理空格、列表缩进等）
             clean_reply = utils.sanitize_format(reply_text)
-            utils.insert_ai_response(note_path, full_header, chat_content, clean_reply, new_cards_body)
+            utils.insert_ai_response(note_path, full_header, chat_content, clean_reply, related_body, new_cards_body)
             print("Success! AI 回复已成功插入。")
         else:
             print("Warning: Agent 返回了空内容，未修改文件。")

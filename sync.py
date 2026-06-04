@@ -4,6 +4,7 @@ import requests
 import os
 import re
 import markdown
+import html
 from dotenv import load_dotenv
 from urllib.parse import quote, unquote
 
@@ -23,6 +24,7 @@ DECK_NAME = os.getenv("ANKI_DECK_NAME", "Obsidian")
 NOTE_TYPE = os.getenv("ANKI_NOTE_TYPE", "Obsidian")
 VAULT_NAME = os.getenv("OBSIDIAN_VAULT_NAME", "my_obsidian_notes")
 # ===========================================
+synced_media_in_run = set()
 
 # --- 基础工具函数 ---
 def load_file(path):
@@ -46,7 +48,7 @@ def process_media_links(text, add_spacing=False):
     """
     if not text: return text
 
-    # 核心修改：允许拓展名后面存在 | 及其跟随的缩放参数
+    # 核心修改：允许拓展名后面存在 | 及其跟随 the 缩放参数
     pattern = r'(!?)\[\[([^\]|]+\.(?:png|jpe?g|gif|svg|webp|bmp))(?:\|[^\]]+)?\]\]'
     
     def replace_match(match):
@@ -55,11 +57,13 @@ def process_media_links(text, add_spacing=False):
         file_path = os.path.join(FILES_DIR, filename)
         
         if os.path.exists(file_path):
-            try:
-                invoke("storeMediaFile", filename=filename, path=file_path)
-                print(f"[媒体] 成功同步图片: {filename}")
-            except Exception as e:
-                print(f"[警告] 同步图片 {filename} 失败: {e}")
+            if filename not in synced_media_in_run:
+                try:
+                    invoke("storeMediaFile", filename=filename, path=file_path)
+                    print(f"[媒体] 成功同步图片: {filename}")
+                    synced_media_in_run.add(filename)
+                except Exception as e:
+                    print(f"[警告] 同步图片 {filename} 失败: {e}")
             
             # 如果开启了空行排版，前后各加两个 <br> 实现“空一行”的效果
             if add_spacing:
@@ -168,6 +172,10 @@ def parse_markdown_table(content):
             a = parts[1].replace('\\|', '|').replace('<br>', '\n')
             nid = parts[2] if len(parts) > 2 and parts[2].strip() else None
 
+            # 过滤掉完全空的行
+            if not q.strip() and not a.strip():
+                continue
+
             # 安全校验：确保 nid 是纯数字，防止未来出现意外的非法字符
             if nid and not nid.isdigit():
                 print(f"[警告] 检测到非法的 Anki ID: {nid}，已忽略。请检查该行格式：\n{line}")
@@ -205,6 +213,35 @@ def sync_notes():
         print(f"错误：找不到文件夹 {TARGET_FULL_PATH}")
         return
 
+    print("正在从 Anki 预载入所有已同步的卡片信息...")
+    anki_notes_by_uid = {}
+    try:
+        # 1. 查找所有通过本系统生成的 Anki 卡片
+        all_script_notes = invoke("findNotes", query=f'"{SEARCH_FIELD}:obsidian://advanced-uri*"' )
+        if all_script_notes:
+            # 2. 批量获取这些卡片的详细字段与信息
+            all_notes_info = invoke("notesInfo", notes=all_script_notes)
+            for info in all_notes_info:
+                fields = info.get("fields", {})
+                uri_field = fields.get(SEARCH_FIELD, {}).get("value", "")
+                
+                # 过滤并提取属于当前库的卡片，使用 html.unescape 处理 HTML 实体转义
+                uri_clean = html.unescape(uri_field)
+                match_uid = re.search(r'uid=([^&"]+)', uri_clean)
+                match_vault = re.search(r'vault=([^&"]+)', uri_clean)
+                
+                if match_uid and match_vault:
+                    note_uid = unquote(match_uid.group(1))
+                    vault_name = unquote(match_vault.group(1))
+                    
+                    if vault_name == VAULT_NAME:
+                        if note_uid not in anki_notes_by_uid:
+                            anki_notes_by_uid[note_uid] = []
+                        anki_notes_by_uid[note_uid].append(info)
+            print(f"预载成功！共加载来自 Anki 的 {len(all_script_notes)} 张卡片（属于当前库 {VAULT_NAME} 的有 {sum(len(v) for v in anki_notes_by_uid.values())} 张）。")
+    except Exception as e:
+        print(f"警告：从 Anki 预加载卡片数据失败: {e}。将退回到空数据继续同步。")
+
     print(f"正在扫描文件夹: {TARGET_FOLDER_NAME} ...")
     active_obsidian_notes = set()
     
@@ -217,23 +254,24 @@ def sync_notes():
             if not content: continue
             
             note_id = extract_id_from_yaml(content)
-            
             if not note_id: continue
+
+            # 核心优化：如果笔记本身根本没有“## 卡片”标记，代表没有制卡需求，直接跳过处理，大幅节省正则与转换开销
+            if "## 卡片" not in content:
+                continue
 
             print(f"\n--- 处理笔记: {file} ---")
             source_uri = f"obsidian://advanced-uri?vault={quote(VAULT_NAME)}&uid={quote(note_id)}"
             new_html_context = convert_to_html(content)
-
-            if "## 卡片" not in content:
-                continue
 
             obsidian_cards = parse_markdown_table(content)
             
             if obsidian_cards:
                 active_obsidian_notes.add(note_id)
             
-            query = f'"{SEARCH_FIELD}:*{note_id}*"'
-            anki_ids = invoke("findNotes", query=query)
+            # 核心优化：直接从内存数据库中读取已有的 card id 列表，无需再通过网络 findNotes
+            existing_notes_info = anki_notes_by_uid.get(note_id, [])
+            anki_ids = [info['noteId'] for info in existing_notes_info]
             
             if not anki_ids and not obsidian_cards:
                 continue
@@ -247,15 +285,11 @@ def sync_notes():
                 
             table_needs_rewrite = False
 
-            if anki_ids:
-                notes_info = invoke("notesInfo", notes=anki_ids)
-                anki_cards_data = {}
-                for info in notes_info:
-                    if isinstance(info, dict) and 'noteId' in info and 'fields' in info:
-                        # 保存完整的 info 字典，以便后续提取 tags
-                        anki_cards_data[info['noteId']] = info
-            else:
-                anki_cards_data = {}
+            # 直接构建 anki_cards_data，无需网络 notesInfo 请求
+            anki_cards_data = {}
+            for info in existing_notes_info:
+                if isinstance(info, dict) and 'noteId' in info and 'fields' in info:
+                    anki_cards_data[info['noteId']] = info
 
             for card in obsidian_cards:
                 # ==================== 反向同步挂起标签到 Obsidian ====================
@@ -344,27 +378,18 @@ def sync_notes():
     # 扫描结束后的全局孤儿卡片清理
     print("\n--- 全局清理孤儿卡片 ---")
     try:
-        # 查找所有通过这个脚本生成的卡片
-        all_script_notes = invoke("findNotes", query=f'"{SEARCH_FIELD}:obsidian://advanced-uri*"')
-        if all_script_notes:
-            notes_info = invoke("notesInfo", notes=all_script_notes)
-            global_ids_to_delete = []
-            for info in notes_info:
-                fields = info.get("fields", {})
-                uri_field = fields.get(SEARCH_FIELD, {}).get("value", "")
-                
-                # 提取 uid
-                match = re.search(r'uid=([^&"]+)', uri_field)
-                if match:
-                    note_uid = unquote(match.group(1))
-                    if note_uid not in active_obsidian_notes:
-                        global_ids_to_delete.append(info["noteId"])
+        # 核心优化：由于我们在最开始已经获取了所有的 notesInfo，直接在内存中比对，无需再次调用 API！
+        global_ids_to_delete = []
+        for note_uid, infos in anki_notes_by_uid.items():
+            if note_uid not in active_obsidian_notes:
+                for info in infos:
+                    global_ids_to_delete.append(info["noteId"])
                         
-            if global_ids_to_delete:
-                invoke("deleteNotes", notes=global_ids_to_delete)
-                print(f"[全局清理] 成功移除了 {len(global_ids_to_delete)} 张孤儿卡片（对应的 Obsidian 笔记已被删除或移除卡片区）。")
-            else:
-                print("[全局清理] 未发现孤儿卡片，状态健康。")
+        if global_ids_to_delete:
+            invoke("deleteNotes", notes=global_ids_to_delete)
+            print(f"[全局清理] 成功移除了 {len(global_ids_to_delete)} 张孤儿卡片（对应的 Obsidian 笔记已被删除或移除卡片区）。")
+        else:
+            print("[全局清理] 未发现孤儿卡片，状态健康。")
     except Exception as e:
         print(f"[全局清理] 检查孤儿卡片时发生错误: {e}")
 

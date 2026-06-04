@@ -92,6 +92,9 @@ def handle(command, history, note_path, full_content):
             )
         )
         parsed: DoctorResponse = res.parsed
+        for card in parsed.cards:
+            card.question = utils.unbold_text(card.question)
+            card.answer = utils.unbold_text(card.answer)
         draft_table = utils.format_cards_to_table(parsed.cards)
 
         return f"🤖 **草稿预览**: {parsed.message}\n\n{draft_table}\n\n*(提示：如果您满意该结果，请在下方回复 `> @revise ok` 进行确认并写入；如果不满意，请继续 @revise 提出修改建议。)*"

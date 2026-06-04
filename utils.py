@@ -15,7 +15,7 @@ load_dotenv(dotenv_path=env_path)
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 VAULT_DIR = os.getenv("VAULT_DIR")
 ANKI_URL = os.getenv("ANKI_URL", "http://127.0.0.1:8765")
-MODEL_NAME = "gemini-3-flash-preview"
+MODEL_NAME = "gemini-3.5-flash"
 
 if not GOOGLE_API_KEY:
     print(f"Error: 未能在 {env_path} 找到 GOOGLE_API_KEY，请检查配置。")
@@ -34,7 +34,16 @@ def parse_document(file_content):
         main_body = file_content
         cards_body = ""
         
-    # 2. 寻找真正的对话起始点
+    # 2. 抽离相关笔记区域
+    related_match = re.search(r'^##\s*(?:相关笔记|Related\s+Notes)\s*$', main_body, re.MULTILINE | re.IGNORECASE)
+    if related_match:
+        related_idx = related_match.start()
+        related_body = main_body[related_idx:]
+        main_body = main_body[:related_idx]
+    else:
+        related_body = ""
+        
+    # 3. 寻找真正的对话起始点
     # 规则：笔记中的对话一定是以 `> ` 开始的段落
     # 如果找不到 `> `，说明全是笔记正文，没有聊天记录
     # 如果找到了，我们需要寻找这个 `> ` 之前可能存在的 `---` 作为正式的分割点
@@ -105,7 +114,7 @@ def parse_document(file_content):
         if related_match:
             context_header = context_header[:related_match.start()].strip()
             
-    return full_header, context_header, chat_content, cards_body
+    return full_header, context_header, chat_content, related_body, cards_body
 
 def parse_markdown_to_history(chat_content):
     lines = chat_content.strip().split('\n')
@@ -135,13 +144,65 @@ def parse_markdown_to_history(chat_content):
     save_turn()
     return history
 
+def unbold_text(text):
+    """
+    Strips bold markers (** and __) and cleans up surrounding spaces when adjacent to CJK/punctuation characters.
+    """
+    def is_cjk_or_punct(ch):
+        if not ch:
+            return False
+        o = ord(ch)
+        return (0x4e00 <= o <= 0x9fff) or (0x3000 <= o <= 0x303f) or (0xff00 <= o <= 0xffef)
+
+    def replace_bold(match):
+        leading_space = match.group(1)
+        content = match.group(3)
+        trailing_space = match.group(4)
+        
+        start_idx = match.start()
+        end_idx = match.end()
+        full_str = match.string
+        
+        char_before = full_str[start_idx - 1] if start_idx > 0 else ""
+        char_after = full_str[end_idx] if end_idx < len(full_str) else ""
+        
+        if leading_space:
+            if is_cjk_or_punct(char_before) or (content and is_cjk_or_punct(content[0])):
+                leading_space = ""
+        if trailing_space:
+            if (content and is_cjk_or_punct(content[-1])) or is_cjk_or_punct(char_after):
+                trailing_space = ""
+                
+        return f"{leading_space}{content}{trailing_space}"
+
+    return re.sub(r"(\s*)(\*\*|__)(.*?)\2(\s*)", replace_bold, text)
+
+def format_cjk_spacing(text):
+    # Split to protect inline code, double links, formulas, markdown links
+    parts = re.split(r"(```.*?```|`[^`\n]*`|\[\[.*?\]\]|\$\$[^$]*?\$\$|\$[^$\n]*?\$|\[.*?\]\(.*?\))", text, flags=re.DOTALL)
+    for i in range(len(parts)):
+        if i % 2 == 0 and parts[i].strip():
+            segment = parts[i]
+            # 中文与英文/数字之间加空格
+            segment = re.sub(r"([\u4e00-\u9fff])([a-zA-Z0-9])", r"\1 \2", segment)
+            segment = re.sub(r"([a-zA-Z0-9])([\u4e00-\u9fff])", r"\1 \2", segment)
+            # 全角标点与中/英/数字之间去掉空格
+            punct_class = r"[\u3000-\u303f\uff00-\uffef\u201c\u201d\u2018\u2019\u2014\u2026]"
+            segment = re.sub(r"([a-zA-Z0-9\u4e00-\u9fff])[ \t]+(" + punct_class + ")", r"\1\2", segment)
+            segment = re.sub(r"(" + punct_class + ")[ \t]+([a-zA-Z0-9\u4e00-\u9fff])", r"\1\2", segment)
+            parts[i] = segment
+    return "".join(parts)
+
 def sanitize_format(text):
     parts = re.split(r"(```.*?```)", text, flags=re.DOTALL)
     for i in range(len(parts)):
         if i % 2 == 0 and parts[i].strip():
             segment = parts[i]
             segment = re.sub(r"(?<!\$)\$[ \t]*([^$\n]+?)[ \t]*\$(?!\$)", r"$\1$", segment)
-            segment = re.sub(r"\*\*(.*?)\*\*", r"\1", segment)
+            segment = re.sub(r"(?<!\$)\$\$[ \t]*(.*?)[ \t]*\$\$(?!\$)", r"$$\1$$", segment, flags=re.DOTALL)
+            segment = re.sub(r"\n*^[ \t]*([-*_])[ \t]*(?:\1[ \t]*){2,}\s*$\n*", "\n\n", segment, flags=re.MULTILINE)
+            segment = unbold_text(segment)
+            segment = format_cjk_spacing(segment)
             segment = re.sub(r"^([ \t]*)[\*\+]\s+", r"\1- ", segment, flags=re.MULTILINE)
             segment = re.sub(r"^([ \t]*)(\d+)\.\s*(.+)", r"\1\2. \3", segment, flags=re.MULTILINE)
             
@@ -199,10 +260,12 @@ def sanitize_format(text):
             
     return "".join(parts).strip()
 
-def insert_ai_response(filepath, header, chat_content, ai_response, cards_body):
+def insert_ai_response(filepath, header, chat_content, ai_response, related_body, cards_body):
     chat_content = chat_content.rstrip()
     ai_response = ai_response.strip()
     new_content = f"{header}{chat_content}\n\n{ai_response}\n\n"
+    if related_body:
+        new_content += f"{related_body.strip()}\n\n"
     if cards_body:
         new_content += f"{cards_body.lstrip()}"
     with open(filepath, 'w', encoding='utf-8') as f:
