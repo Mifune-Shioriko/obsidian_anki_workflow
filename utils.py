@@ -202,8 +202,10 @@ def sanitize_format(text):
             segment = re.sub(r"(?<!\$)\$\$[ \t]*(.*?)[ \t]*\$\$(?!\$)", r"$$\1$$", segment, flags=re.DOTALL)
             segment = re.sub(r"\n*^[ \t]*([-*_])[ \t]*(?:\1[ \t]*){2,}\s*$\n*", "\n\n", segment, flags=re.MULTILINE)
             segment = unbold_text(segment)
+            segment = re.sub(r" \[\d+\]", "", segment)
             segment = format_cjk_spacing(segment)
             segment = re.sub(r"^([ \t]*)[\*\+]\s+", r"\1- ", segment, flags=re.MULTILINE)
+            segment = re.sub(r"^([ \t]*)-(?![-\s])(.+)$", r"\1- \2", segment, flags=re.MULTILINE)
             segment = re.sub(r"^([ \t]*)(\d+)\.\s*(.+)", r"\1\2. \3", segment, flags=re.MULTILINE)
             
             lines = segment.splitlines()

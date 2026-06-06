@@ -91,6 +91,23 @@ def main():
         command_text = last_user_text
         if not command_text.strip():
             command_text = "请继续执行"
+        
+        # 只要有一轮使用了某 agent，之后都默认是调用该 agent，直到调用另一个 agent
+        detected_agent = None
+        for turn in reversed(history[:-1]):
+            if turn["role"] == "user":
+                turn_text = turn["parts"][0]["text"].strip()
+                match_start = re.match(r'^@(\w+)(?:\s+(.*))?$', turn_text, re.DOTALL)
+                match_end = re.search(r'^(.*?)\s*@(\w+)\s*$', turn_text, re.DOTALL)
+                if match_start:
+                    detected_agent = match_start.group(1)
+                    break
+                elif match_end:
+                    detected_agent = match_end.group(2)
+                    break
+        
+        if detected_agent and detected_agent in AGENT_REGISTRY:
+            agent_name = detected_agent
 
     # 4. 合并相邻的同角色对话 (合并 consecutive roles)
     merged_history = []
