@@ -65,6 +65,104 @@ def main():
     # 3. 路由识别与指令清理
     last_user_text = history[-1]["parts"][0]["text"].strip()
     
+    # 提取所有 @ 单词并匹配合法的已注册 Agent
+    all_agent_matches = re.findall(r'@(\w+)', last_user_text)
+    valid_agents = [name for name in all_agent_matches if name in AGENT_REGISTRY]
+    
+    # 如果检测到非法的 Agent 调用，给予友好报错
+    invalid_agents = [name for name in all_agent_matches if name not in AGENT_REGISTRY]
+    if invalid_agents:
+        print(f"Error: 管道中检测到未注册或无效的 Agent: {invalid_agents}")
+        sys.exit(1)
+
+    if len(valid_agents) > 1:
+        print(f"✨ 激活 Agent 链式管道: {' ➔ '.join(valid_agents)}")
+        
+        # 提取第一个 Agent 的干净指令，剔除仅包含 @ 符号及管道连字符的行或部分
+        cleaned_lines = []
+        for line in last_user_text.split('\n'):
+            stripped_line = line.strip()
+            # 去除整行中的所有 @agent 词汇
+            line_no_agents = re.sub(r'@\w+', '', stripped_line).strip()
+            # 如果去除 @agent 后，整行只剩下管道符号（如 |, ->, %, >）或为空，则忽略该行
+            if not re.sub(r'[\s|>\-%]+', '', line_no_agents).strip():
+                continue
+            # 否则保留该行，并移除非内容的 @agent 词汇
+            cleaned_lines.append(re.sub(r'@\w+', '', line).rstrip())
+            
+        cleaned_command = '\n'.join(cleaned_lines).strip()
+        # 裁剪掉首尾多余的管道连字符及空格
+        cleaned_command = re.sub(r'^[\s|>\-%]+|[\s|>\-%]+$', '', cleaned_command).strip()
+        
+        if not cleaned_command:
+            cleaned_command = "请继续执行"
+            
+        current_content = full_content
+        
+        for idx, agent_name in enumerate(valid_agents):
+            full_header, context_header, chat_content, related_body, cards_body = utils.parse_document(current_content)
+            
+            # 从第二步开始，追加 simulated user 提问节点
+            if idx > 0:
+                chat_content = chat_content.rstrip() + f"\n\n> @{agent_name}"
+                utils.insert_ai_response(note_path, full_header, chat_content, "", related_body, cards_body)
+                
+                # 重新加载写入后的文档状态
+                with open(note_path, 'r', encoding='utf-8-sig') as f:
+                    current_content = f.read()
+                full_header, context_header, chat_content, related_body, cards_body = utils.parse_document(current_content)
+            
+            # 解析本步的对话历史，确保相邻同角色已被合并
+            step_history = utils.parse_markdown_to_history(chat_content)
+            if step_history and step_history[0]["role"] == "model":
+                step_history[0]["role"] = "user"
+                
+            merged_history = []
+            for turn in step_history:
+                if merged_history and merged_history[-1]["role"] == turn["role"]:
+                    merged_history[-1]["parts"][0]["text"] += "\n\n" + turn["parts"][0]["text"]
+                else:
+                    merged_history.append(turn)
+            step_history = merged_history
+            
+            # 确定本步命令
+            step_command = cleaned_command if idx == 0 else "请继续执行"
+            step_history[-1]["parts"][0]["text"] = step_command
+            
+            print(f"[{idx+1}/{len(valid_agents)}] 正在接力给 Agent: {agent_name}...")
+            
+            # 调用 Agent 句柄
+            reply_text = AGENT_REGISTRY[agent_name](
+                command=step_command,
+                history=step_history,
+                note_path=note_path,
+                full_content=current_content
+            )
+            
+            if reply_text:
+                # 重新加载物理文件（防止部分 Agent 内部对卡片或正文已经做了持久化更新而导致冲突）
+                with open(note_path, 'r', encoding='utf-8-sig') as f:
+                    temp_content = f.read()
+                temp_full_header, _, _, temp_related_body, temp_cards_body = utils.parse_document(temp_content)
+                
+                clean_reply = utils.sanitize_format(reply_text)
+                utils.insert_ai_response(note_path, temp_full_header, chat_content, clean_reply, temp_related_body, temp_cards_body)
+                print(f"[{idx+1}/{len(valid_agents)}] Agent {agent_name} 的回复成功插入。")
+                
+                # 错误/警告检测与管道熔断 (Error detection and early-exit)
+                if reply_text.strip().startswith(("❌", "⚠️")) or "发生错误" in reply_text:
+                    print(f"⚠️ 检测到 Agent {agent_name} 执行出错或有重要提示。管道已终止。")
+                    sys.exit(1)
+            else:
+                print(f"[{idx+1}/{len(valid_agents)}] Agent {agent_name} 执行完毕（无文本返回，可能已就地修改表格）。")
+                
+            # 刷新最新内容供下一步使用
+            with open(note_path, 'r', encoding='utf-8-sig') as f:
+                current_content = f.read()
+                
+        print("🎉 链式管道调用全部执行完毕！")
+        return
+
     # 优先匹配开头为 @agent 的指令 (如: @explain xxx)
     route_match_start = re.match(r'^@(\w+)(?:\s+(.*))?$', last_user_text, re.DOTALL)
     # 其次匹配结尾为 @agent 的指令 (如: xxx\n@explain)

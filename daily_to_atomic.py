@@ -133,13 +133,35 @@ def main():
     atomic_path = os.path.join(atomic_dir, f"{safe_title}.md")
     note_id = uuid.uuid4().hex
     
+    # 自动清洗 draft_content，剔除幻灯片原件文字、图片链接以及对话触发命令
+    lines = draft_content.splitlines()
+    has_agent_mention = any(re.search(r'@\w+', l) for l in lines if l.strip().startswith('>'))
+    
+    if has_agent_mention:
+        last_quote_idx = -1
+        for i, line in enumerate(lines):
+            if line.strip().startswith('>'):
+                last_quote_idx = i
+                
+        if last_quote_idx != -1:
+            # 只保留最后一个 > 之后的行，并去除多余的首尾空行
+            remaining_lines = lines[last_quote_idx + 1:]
+            start_idx = 0
+            while start_idx < len(remaining_lines) and not remaining_lines[start_idx].strip():
+                start_idx += 1
+            cleaned_draft_content = "\n".join(remaining_lines[start_idx:])
+        else:
+            cleaned_draft_content = draft_content
+    else:
+        cleaned_draft_content = draft_content
+    
     atomic_content = f"""---
 date: {TODAY_STR}
 title: {safe_title}
 id: {note_id}
 type: from_daily_notes
 ---
-{draft_content}
+{cleaned_draft_content}
 """
 
     updated_daily_content = f"{pre_content.strip()}\n[[{safe_title}]]\n\n---\n\n"

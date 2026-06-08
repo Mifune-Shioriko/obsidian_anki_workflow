@@ -31,8 +31,10 @@ def handle(command, history, note_path, full_content):
     
     full_header, context_header, chat_content, related_body, _ = utils.parse_document(full_content)
     
-    # Extract bold texts from ALL turns in the history (both user and model)
+    # Extract bold texts from both the note's context header and the dialogue history
     bold_contents = []
+    if context_header:
+        bold_contents.extend(find_bold_texts(context_header))
     for turn in history:
         for part in turn.get("parts", []):
             text = part.get("text", "")
@@ -46,7 +48,7 @@ def handle(command, history, note_path, full_content):
             
     if not unique_bolds:
         return (
-            "⚠️ **Add Agent 提示**：未在当前对话历史中检测到加粗的文本（如 `**加粗内容**`）。\n"
+            "⚠️ **Add Agent 提示**：未在当前笔记正文或对话历史中检测到加粗的文本（如 `**加粗内容**`）。\n"
             "本 Agent 采用定向制卡模式，请先使用粗体圈定您想要制卡的核心知识点，然后再试。"
         )
 
@@ -132,7 +134,8 @@ def handle(command, history, note_path, full_content):
         current_cards_dict.extend(new_cards)
         
         # Build the updated content without the @add dialogue block
-        new_content = f"{cleaned_full_header}{cleaned_chat_content}\n\n"
+        base_body = f"{cleaned_full_header}{cleaned_chat_content}".rstrip()
+        new_content = f"{base_body}\n\n"
         if related_body:
             new_content += f"{related_body.strip()}\n\n"
         
