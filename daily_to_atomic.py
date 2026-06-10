@@ -4,19 +4,22 @@ import json
 import uuid
 import sys
 from datetime import datetime
+from pathlib import Path
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
+import model_client as genai
+from model_client import types
 
 # ==========================================
 # 1. 基础与环境配置
 # ==========================================
 # 加载 .env 文件中的环境变量
-load_dotenv()
+current_dir = Path(__file__).resolve().parent
+load_dotenv(dotenv_path=current_dir / '.env')
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+QWEN_API_KEY = os.getenv("QWEN_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
 
-if not GOOGLE_API_KEY:
-    print("[!] Error: 未找到 GOOGLE_API_KEY，请检查 .env 文件或环境变量配置。")
+if not GOOGLE_API_KEY and not QWEN_API_KEY:
+    print("[!] Error: 未找到 GOOGLE_API_KEY 或 QWEN_API_KEY，请检查 .env 文件或环境变量配置。")
     sys.exit(1)
 
 BASE_DIR = os.getenv("VAULT_DIR", r"C:\Default\Path\If\Needed")
@@ -34,7 +37,7 @@ def main():
     # ==========================================
     if not os.path.exists(daily_path):
         print(f"[!] 找不到文件，请检查路径是否正确: {daily_path}")
-        return
+        sys.exit(1)
 
     with open(daily_path, 'r', encoding='utf-8') as f:
         content = f.read()
@@ -70,7 +73,7 @@ def main():
 
     if not has_draft:
         print("[-] 未在文件末尾检测到有效草稿内容，流程结束。")
-        return
+        sys.exit(1)
 
     print(f"[*] 成功提取草稿内容，长度: {len(draft_content)} 字符")
 
@@ -110,7 +113,7 @@ def main():
         ai_response_text = response.text
     except Exception as e:
         print(f"[!] API 请求失败: {e}")
-        return
+        sys.exit(1)
 
     # ==========================================
     # 5. 清洗数据与生成文件
@@ -130,7 +133,16 @@ def main():
     print(f"[*] AI 生成标题: {safe_title}")
 
     atomic_dir = os.path.join(BASE_DIR, "Atomic Notes")
+    
+    # 极简防重名逻辑：若存在同名文件，自动在标题后加上递增数字（例如：标题 1, 标题 2）
+    base_title = safe_title
     atomic_path = os.path.join(atomic_dir, f"{safe_title}.md")
+    counter = 1
+    while os.path.exists(atomic_path):
+        safe_title = f"{base_title} {counter}"
+        atomic_path = os.path.join(atomic_dir, f"{safe_title}.md")
+        counter += 1
+    
     note_id = uuid.uuid4().hex
     
     # 自动清洗 draft_content，剔除幻灯片原件文字、图片链接以及对话触发命令
@@ -144,12 +156,19 @@ def main():
                 last_quote_idx = i
                 
         if last_quote_idx != -1:
-            # 只保留最后一个 > 之后的行，并去除多余的首尾空行
+            # 完整保留到最后一个 > 为止的引用头
+            quote_header_lines = lines[:last_quote_idx + 1]
+            quote_header = "\n".join(quote_header_lines)
+            
+            # 提取正文并去除头部多余空行
             remaining_lines = lines[last_quote_idx + 1:]
             start_idx = 0
             while start_idx < len(remaining_lines) and not remaining_lines[start_idx].strip():
                 start_idx += 1
-            cleaned_draft_content = "\n".join(remaining_lines[start_idx:])
+            body_content = "\n".join(remaining_lines[start_idx:])
+            
+            # 拼接头部与正文
+            cleaned_draft_content = f"{quote_header}\n\n{body_content}"
         else:
             cleaned_draft_content = draft_content
     else:
@@ -185,6 +204,7 @@ type: from_daily_notes
 
     except Exception as e:
         print(f"[!] 写入文件失败: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

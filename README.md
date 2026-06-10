@@ -10,6 +10,7 @@
     *   **暂停与复活机制**：在 Anki 中被暂停的卡片，同步时会在 Obsidian 对应卡片的问题栏中打上 `#auto_suspended` 标签；若想在 Obsidian 中复活（取消暂停）卡片，只需在问题前加上 `#revive`，下次同步将自动取消暂停并清理该标签。
 *   **日记/随笔自动拆分 (daily_to_atomic.py)**
     *   自动扫描 Daily Notes/ 中的零碎随笔，利用 AI 提取并精简为带 UUID 的、主题单一清晰的“原子笔记”（Atomic Notes）。
+    *   **极简防重名**：若生成的标题与已有笔记重名，代码层会自动在标题后追加递增数字（例如：`标题 1`，`标题 2`），既省 token 又安全，防止文件被意外覆盖。
 *   **多智能体路由系统 (router.py 和 agents/)**
     *   高度可扩展的 AI Agent 分发系统。在笔记末尾的 quote 块中输入 `@agent_name <指令>` 即可调用。
     *   内置 Agent 包括：`@add`（制卡）、`@revise`（修改）、`@explain`（解释）、`@pubmed`（学术搜索）、`@tag`（自动标签）、`@map`（关联图谱）、`@reading_suggestions`（阅读推荐）等。
