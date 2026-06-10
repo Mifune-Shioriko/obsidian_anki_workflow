@@ -13,12 +13,13 @@ if not env_path.exists():
 load_dotenv(dotenv_path=env_path)
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+QWEN_API_KEY = os.getenv("QWEN_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
 VAULT_DIR = os.getenv("VAULT_DIR")
 ANKI_URL = os.getenv("ANKI_URL", "http://127.0.0.1:8765")
-MODEL_NAME = "gemini-3.5-flash"
+MODEL_NAME = "gemini-2.5-flash"
 
-if not GOOGLE_API_KEY:
-    print(f"Error: 未能在 {env_path} 找到 GOOGLE_API_KEY，请检查配置。")
+if not GOOGLE_API_KEY and not QWEN_API_KEY:
+    print(f"Error: 未能在 {env_path} 找到 GOOGLE_API_KEY 或 QWEN_API_KEY，请检查配置。")
     import sys
     sys.exit(1)
 
@@ -167,15 +168,27 @@ def unbold_text(text):
         char_after = full_str[end_idx] if end_idx < len(full_str) else ""
         
         if leading_space:
-            if is_cjk_or_punct(char_before) or (content and is_cjk_or_punct(content[0])):
-                leading_space = ""
+            # Check if we are inside a list marker prefix
+            line_start = full_str.rfind("\n", 0, start_idx) + 1
+            prefix_in_line = full_str[line_start:start_idx]
+            is_list_prefix = bool(re.match(r"^[ \t]*[-*+\d.]*$", prefix_in_line))
+            
+            if not is_list_prefix:
+                if is_cjk_or_punct(char_before) or (content and is_cjk_or_punct(content[0])):
+                    leading_space = ""
         if trailing_space:
             if (content and is_cjk_or_punct(content[-1])) or is_cjk_or_punct(char_after):
                 trailing_space = ""
                 
         return f"{leading_space}{content}{trailing_space}"
 
-    return re.sub(r"(\s*)(\*\*|__)(.*?)\2(\s*)", replace_bold, text)
+    # Split to protect inline code, double links, formulas, markdown links
+    parts = re.split(r"(```.*?```|`[^`\n]*`|\[\[.*?\]\]|\$\$[^$]*?\$\$|\$[^$\n]*?\$|\[.*?\]\(.*?\))", text, flags=re.DOTALL)
+    for i in range(len(parts)):
+        if i % 2 == 0:
+            parts[i] = re.sub(r"([ \t]*)(\*\*|__)(.*?)\2([ \t]*)", replace_bold, parts[i])
+            
+    return "".join(parts)
 
 def format_cjk_spacing(text):
     # Split to protect inline code, double links, formulas, markdown links
@@ -216,7 +229,14 @@ def sanitize_format(text):
             for j, line in enumerate(lines):
                 is_current_list = bool(re.match(list_pattern, line))
                 is_empty = (line.strip() == "")
+                is_header = line.strip().startswith('#')
                 
+                if is_header:
+                    if fixed_lines and fixed_lines[-1].strip() != "" and not fixed_lines[-1].strip().startswith('#'):
+                        fixed_lines.append("")
+                elif fixed_lines and fixed_lines[-1].strip().startswith('#') and not is_empty:
+                    fixed_lines.append("")
+                    
                 if is_empty:
                     prev_is_list = bool(fixed_lines and re.match(list_pattern, fixed_lines[-1]))
                     next_is_list = False
