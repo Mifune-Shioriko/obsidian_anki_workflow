@@ -7,28 +7,20 @@
 ## 系统架构总览
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        Obsidian Vault                               │
-│  ┌──────────────┐  ┌───────────────┐  ┌──────────────────────────┐ │
-│  │ Daily Notes  │──│ Atomic Notes  │──│ Anki Card Table (## 卡片)│ │
-│  └──────┬───────┘  └───────┬───────┘  └────────────┬─────────────┘ │
-│         │                  │                        │               │
-│         ▼                  ▼                        ▼               │
-│  daily_to_atomic.py  similarity_manager.py     sync.py / sync_all.py│
-└─────────┼────────────────────┼────────────────────┼─────────────────┘
-          │                    │                    │
-          ▼                    ▼                    ▼
-   ┌──────────────┐   ┌──────────────┐    ┌──────────────┐
-   │  Gemini/Qwen │   │   Qdrant DB  │    │  AnkiConnect │
-   │  (LLM API)   │   │  (向量检索)   │    │  (端口 8765) │
-   └──────────────┘   └──────────────┘    └──────────────┘
-          │
-          ▼
-   ┌──────────────────────────────────────────┐
-   │           Multi-Agent Router             │
-   │  @default @explain @dig @new             │
-   │  @add @revise @file @pubmed              │
-   └──────────────────────────────────────────┘
+Obsidian Vault
+  Daily Notes  ──>  Atomic Notes  ──>  ## 卡片 (Markdown Table)
+       │                 │                      │
+       v                 v                      v
+  daily_to_atomic   similarity_manager     sync / sync_all
+       │                 │                      │
+       v                 v                      v
+  Gemini / Qwen     Qdrant DB            AnkiConnect :8765
+  (LLM API)        (向量检索)             (Anki 本地服务)
+       │
+       v
+  Multi-Agent Router
+  @default  @explain  @dig  @new
+  @add      @revise   @file @pubmed
 ```
 
 ---
