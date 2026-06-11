@@ -18,7 +18,8 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
 
-load_dotenv()
+script_dir = Path(__file__).resolve().parent
+load_dotenv(dotenv_path=script_dir / '.env')
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 if not GOOGLE_API_KEY:

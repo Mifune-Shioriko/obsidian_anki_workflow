@@ -1,5 +1,5 @@
-from google import genai
-from google.genai import types
+import model_client as genai
+from model_client import types
 import utils
 import os
 
@@ -52,6 +52,7 @@ def handle(command, history, note_path, full_content):
     # 2. 建立索引并提取双链与图片
     vault_index = utils.build_vault_index(utils.VAULT_DIR)
     linked_context, linked_images = utils.extract_linked_context(all_chat_text, vault_index)
+    linked_images = []  # 限制：不向 dig Agent 传递图片，防止其挖掘过多图片细节
 
     # 解析当前笔记的正文内容作为上下文
     _, context_header, _, _, _ = utils.parse_document(full_content)

@@ -7,26 +7,29 @@ import sys
 import json
 import uuid
 import shutil
+import argparse
 import subprocess
 from pathlib import Path
 from datetime import datetime
 import fitz  # PyMuPDF
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
-from google import genai
-from google.genai import types
+import model_client as genai
+from model_client import types
 
 # 允许引入同目录下的工具库
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import utils
 
 # 加载环境变量
-load_dotenv()
+SCRIPT_DIR = Path(__file__).resolve().parent
+load_dotenv(dotenv_path=SCRIPT_DIR / '.env')
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+QWEN_API_KEY = os.getenv("QWEN_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
 VAULT_DIR = os.getenv("VAULT_DIR")
 
-if not GOOGLE_API_KEY or not VAULT_DIR:
-    print("[!] 错误: 未能在环境变量或 .env 中找到 GOOGLE_API_KEY 或 VAULT_DIR。")
+if (not GOOGLE_API_KEY and not QWEN_API_KEY) or not VAULT_DIR:
+    print("[!] 错误: 未能在环境变量或 .env 中找到 GOOGLE_API_KEY/QWEN_API_KEY 或 VAULT_DIR。")
     sys.exit(1)
 
 client = genai.Client(api_key=GOOGLE_API_KEY)
@@ -90,15 +93,23 @@ def convert_pptx_to_pdf(pptx_path):
         print("[!] 转换未生成预期的 PDF 文件。")
         return None
 
-def analyze_slides(pdf_path):
+def analyze_slides(pdf_path, start_page=1, end_page=None):
     """
-    使用 PyMuPDF 提取每一页的文本，并让 Gemini-3.5-Flash 进行结构分析，识别内容页和结构页
+    使用 PyMuPDF 提取指定范围内的页面文本，并让 Gemini-3.5-Flash 进行结构分析，识别内容页和结构页
     """
     print(f"[*] 正在读取 PDF 并进行结构预分析: {pdf_path.name}...")
     doc = fitz.open(pdf_path)
-    slides_data = []
+    total_pages = len(doc)
     
-    for i in range(len(doc)):
+    if start_page < 1:
+        start_page = 1
+    if end_page is None or end_page > total_pages:
+        end_page = total_pages
+        
+    print(f"[*] 分析范围已限制为: 第 {start_page} 页 至 第 {end_page} 页 (共 {total_pages} 页)")
+    
+    slides_data = []
+    for i in range(start_page - 1, end_page):
         page = doc[i]
         text = page.get_text().strip()
         slides_data.append({
@@ -106,7 +117,7 @@ def analyze_slides(pdf_path):
             "text": text[:1500]  # 限制长度以防止极长文本消耗无用 token
         })
         
-    print(f"[*] 成功提取 {len(doc)} 页文本，正在向 Gemini 请求结构化分析...")
+    print(f"[*] 成功提取 {len(slides_data)} 页文本，正在向 Gemini 请求结构化分析...")
     
     prompt = f"""你是一个极其专业的学术幻灯片（Slide）结构分析专家。
 你的任务是阅读给出的每一页 Slide 的文本内容，分析其在整个幻灯片文件中的结构角色，并决定是否应当跳过该页。
@@ -185,11 +196,14 @@ def display_analysis_and_get_approval(analysis):
                 print("[!] 输入格式有误，请输入逗号分隔的整数页码。")
 
 def main():
-    if len(sys.argv) < 2:
-        print("用法: python auto_slide_processor.py <slide_path_pptx_or_pdf>")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="自动 Slide 处理器 (Obsidian Anki)")
+    parser.add_argument("slide_path", help="幻灯片文件的物理路径 (.pdf 或 .pptx)")
+    parser.add_argument("--yes", action="store_true", help="自动确认每页的处理结果，无需手动回车")
+    parser.add_argument("-s", "--start", type=int, default=1, help="处理的起始页码 (从 1 开始，默认 1)")
+    parser.add_argument("-e", "--end", type=int, default=None, help="处理的结束页码 (默认到最后一页)")
+    args = parser.parse_args()
         
-    input_file = Path(sys.argv[1]).resolve()
+    input_file = Path(args.slide_path).resolve()
     if not input_file.exists():
         print(f"[!] 错误: 找不到输入文件 '{input_file}'")
         sys.exit(1)
@@ -206,8 +220,24 @@ def main():
         print("[!] 错误: 仅支持 .pdf 和 .pptx 格式的幻灯片文件。")
         sys.exit(1)
         
+    # 获取总页数并验证边界
+    doc_temp = fitz.open(pdf_path)
+    total_pages = len(doc_temp)
+    doc_temp.close()
+    
+    start_page = args.start
+    end_page = args.end if args.end is not None else total_pages
+    
+    if start_page > total_pages or start_page < 1:
+        print(f"[!] 错误: 起始页码 {start_page} 超出了幻灯片总页数范围 [1, {total_pages}]")
+        sys.exit(1)
+        
+    if end_page < start_page:
+        print(f"[!] 错误: 结束页码 {end_page} 不能小于起始页码 {start_page}")
+        sys.exit(1)
+        
     # 1. 结构预分析
-    analysis = analyze_slides(pdf_path)
+    analysis = analyze_slides(pdf_path, start_page=start_page, end_page=end_page)
     if not analysis:
         print("[!] 错误: 无法获取结构预分析结果，全自动流水线终止。")
         sys.exit(1)
@@ -284,10 +314,6 @@ def main():
 
 ---
 
-![[{image_name}]]
-幻灯片文本：
-{slide_text}
-
 > ![[{image_name}]]
 > @explain @dig @new
 """
@@ -300,68 +326,99 @@ def main():
         
         # 4. 运行 router 管道机制
         # 使用 subprocess 运行以确保隔离和安全出口
-        router_cmd = [sys.executable, "router.py", daily_path]
+        router_cmd = [sys.executable, str(SCRIPT_DIR / "router.py"), daily_path]
         router_res = subprocess.run(router_cmd, capture_output=True, text=True)
         
         # 检查是否管道熔断或出错
         if router_res.returncode != 0:
             print(f"[!] 警告: Agent 管道执行失败或已被熔断！")
             print(f"    - 错误信息:\n{router_res.stdout}\n{router_res.stderr}")
+            if args.yes:
+                print("[-] 自动模式：正在回滚 Daily Note，并删除临时渲染图片...")
+                with open(daily_path, 'w', encoding='utf-8') as f:
+                    f.write(daily_backup_content)
+                if os.path.exists(image_path):
+                    os.remove(image_path)
+                print("[!] 状态已还原，自动流水线已安全终止。")
+                sys.exit(1)
         else:
             print("[+] Agent 链式计算成功完成！")
             
         # 5. 人机交互检查
-        while True:
-            print("\n" + "="*50)
-            print(f"🎯 [第 {page_num} 页 Slide 计算完成]")
-            print("  请现在打开 Obsidian 检查当日 Daily Note 尾部生成的解释与卡片表！")
-            print("="*50)
-            print("  [Enter] (回车): 效果完美，将其打包并转换成原子笔记 (Atomic Note)")
-            print("  [r] (重试): 还原 Daily Note，删除图片，重新运行这一页（可先修改 Agent 源码或重试）")
-            print("  [q] (退出): 还原 Daily Note，删除图片，并安全退出管线")
-            print("="*50)
-            choice = input("选择操作 >>> ").strip().lower()
+        if args.yes:
+            print(f"\n🎯 [第 {page_num} 页 Slide 计算完成] (自动确认)")
+            print("[*] 正在调用 daily_to_atomic.py 生成卡片盒原子笔记...")
+            dt_cmd = [sys.executable, str(SCRIPT_DIR / "daily_to_atomic.py")]
+            dt_res = subprocess.run(dt_cmd, capture_output=True, text=True)
             
-            if not choice:
-                # 确认：调用 daily_to_atomic.py 打包
-                print("[*] 正在调用 daily_to_atomic.py 生成卡片盒原子笔记...")
-                dt_cmd = [sys.executable, "daily_to_atomic.py"]
-                dt_res = subprocess.run(dt_cmd, capture_output=True, text=True)
+            if dt_res.returncode == 0:
+                print(f"[+] 原子化转换成功！")
+                for line in dt_res.stdout.splitlines():
+                    if "已生成新卡片" in line or "AI 生成标题" in line:
+                        print(f"    {line}")
+                next_image_num += 1
+                page_idx_in_list += 1
+            else:
+                print(f"[!] 自动转换原子笔记失败！\n{dt_res.stdout}\n{dt_res.stderr}")
+                print("[-] 自动模式：正在回滚 Daily Note，并删除临时渲染图片...")
+                with open(daily_path, 'w', encoding='utf-8') as f:
+                    f.write(daily_backup_content)
+                if os.path.exists(image_path):
+                    os.remove(image_path)
+                print("[!] 自动模式因错误而中止。")
+                sys.exit(1)
+        else:
+            while True:
+                print("\n" + "="*50)
+                print(f"🎯 [第 {page_num} 页 Slide 计算完成]")
+                print("  请现在打开 Obsidian 检查当日 Daily Note 尾部生成的解释与卡片表！")
+                print("="*50)
+                print("  [Enter] (回车): 效果完美，将其打包并转换成原子笔记 (Atomic Note)")
+                print("  [r] (重试): 还原 Daily Note，删除图片，重新运行这一页（可先修改 Agent 源码或重试）")
+                print("  [q] (退出): 还原 Daily Note，删除图片，并安全退出管线")
+                print("="*50)
+                choice = input("选择操作 >>> ").strip().lower()
                 
-                if dt_res.returncode == 0:
-                    print(f"[+] 原子化转换成功！")
-                    # 打印 daily_to_atomic 的成果
-                    for line in dt_res.stdout.splitlines():
-                        if "已生成新卡片" in line or "AI 生成标题" in line:
-                            print(f"    {line}")
-                    # 处理下一张，图片编号自增，并在 target 列表中往后走
-                    next_image_num += 1
-                    page_idx_in_list += 1
-                    break
-                else:
-                    print(f"[!] 转换原子笔记失败！\n{dt_res.stdout}\n{dt_res.stderr}")
-                    print("[!] 请检查格式。若想放弃本次生成的垃圾内容，请输入 r 进行还原重试。")
+                if not choice:
+                    # 确认：调用 daily_to_atomic.py 打包
+                    print("[*] 正在调用 daily_to_atomic.py 生成卡片盒原子笔记...")
+                    dt_cmd = [sys.executable, str(SCRIPT_DIR / "daily_to_atomic.py")]
+                    dt_res = subprocess.run(dt_cmd, capture_output=True, text=True)
                     
-            elif choice == 'r':
-                # 回滚
-                print("[-] 正在回滚 Daily Note，并删除临时渲染图片...")
-                with open(daily_path, 'w', encoding='utf-8') as f:
-                    f.write(daily_backup_content)
-                if os.path.exists(image_path):
-                    os.remove(image_path)
-                print("[+] 回滚完成。准备重新处理当前 Slide...")
-                # 重新跑当前页，不增加 page_idx_in_list 和 next_image_num
-                break
-                
-            elif choice == 'q':
-                # 还原并安全退出
-                print("[-] 正在还原 Daily Note，并删除临时渲染图片...")
-                with open(daily_path, 'w', encoding='utf-8') as f:
-                    f.write(daily_backup_content)
-                if os.path.exists(image_path):
-                    os.remove(image_path)
-                print("[+] 状态已恢复，Pipeline 安全退出。祝您学习愉快！")
-                sys.exit(0)
+                    if dt_res.returncode == 0:
+                        print(f"[+] 原子化转换成功！")
+                        # 打印 daily_to_atomic 的成果
+                        for line in dt_res.stdout.splitlines():
+                            if "已生成新卡片" in line or "AI 生成标题" in line:
+                                print(f"    {line}")
+                        # 处理下一张，图片编号自增，并在 target 列表中往后走
+                        next_image_num += 1
+                        page_idx_in_list += 1
+                        break
+                    else:
+                        print(f"[!] 转换原子笔记失败！\n{dt_res.stdout}\n{dt_res.stderr}")
+                        print("[!] 请检查格式。若想放弃本次生成的垃圾内容，请输入 r 进行还原重试。")
+                        
+                elif choice == 'r':
+                    # 回滚
+                    print("[-] 正在回滚 Daily Note，并删除临时渲染图片...")
+                    with open(daily_path, 'w', encoding='utf-8') as f:
+                        f.write(daily_backup_content)
+                    if os.path.exists(image_path):
+                        os.remove(image_path)
+                    print("[+] 回滚完成。准备重新处理当前 Slide...")
+                    # 重新跑当前页，不增加 page_idx_in_list 和 next_image_num
+                    break
+                    
+                elif choice == 'q':
+                    # 还原并安全退出
+                    print("[-] 正在还原 Daily Note，并删除临时渲染图片...")
+                    with open(daily_path, 'w', encoding='utf-8') as f:
+                        f.write(daily_backup_content)
+                    if os.path.exists(image_path):
+                        os.remove(image_path)
+                    print("[+] 状态已恢复，Pipeline 安全退出。祝您学习愉快！")
+                    sys.exit(0)
 
     print("\n" + "="*50)
     print("🎉 恭喜！所选幻灯片的所有页面均已全部处理并原子化转换完毕！")

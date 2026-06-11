@@ -23,6 +23,13 @@
         </div>
     </div>
     {{/原来的笔记}}
+
+    <a id="comprehension-toast" class="comprehension-toast" style="display: none; margin-bottom: 20px; text-decoration: none;" href="#">
+        <span class="toast-icon">💡</span>
+        <div class="toast-message">
+            関連するノートの復習をお勧めします
+        </div>
+    </a>
 </div>
 
 <script>
@@ -63,4 +70,53 @@ setTimeout(() => {
         }
     });
 }, 0);
+
+// --- 理解度监控与提醒逻辑 ---
+setTimeout(() => {
+    const advancedUri = "{{Advanced URI}}";
+    if (!advancedUri) return;
+
+    fetch("http://127.0.0.1:8765", {
+        method: "POST",
+        body: JSON.stringify({
+            action: "findCards",
+            version: 6,
+            params: { query: `"Advanced URI:${advancedUri}"` }
+        })
+    })
+    .then(r => r.json())
+    .then(res => {
+        const cardIds = res.result;
+        if (!cardIds || cardIds.length === 0) return;
+        
+        return fetch("http://127.0.0.1:8765", {
+            method: "POST",
+            body: JSON.stringify({
+                action: "cardsInfo",
+                version: 6,
+                params: { cards: [cardIds[0]] }
+            })
+        }).then(r => r.json());
+    })
+    .then(res => {
+        if (!res || !res.result || res.result.length === 0) return;
+        const card = res.result[0];
+        
+        let difficulty = card.difficulty;
+        if (difficulty === undefined) {
+            const ease = card.factor ? card.factor / 10 : 250;
+            difficulty = Math.max(1.0, Math.min(10.0, ((300.0 - ease) / 170.0) * 9.0 + 1.0));
+        }
+        
+        // 推荐阈值：4.40 (对应理解度 <= 66%, 仅针对最难的 20% 卡片触发)
+        if (difficulty >= 4.40) {
+            const toast = document.getElementById("comprehension-toast");
+            if (toast) {
+                toast.href = advancedUri;
+                toast.style.display = "flex";
+            }
+        }
+    })
+    .catch(err => console.log("AnkiConnect error:", err));
+}, 50);
 </script>

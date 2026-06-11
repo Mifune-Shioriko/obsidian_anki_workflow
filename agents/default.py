@@ -1,5 +1,5 @@
-from google import genai
-from google.genai import types
+import model_client as genai
+from model_client import types
 import utils
 import os
 
