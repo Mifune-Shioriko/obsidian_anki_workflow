@@ -22,9 +22,9 @@ for file_path in agents_dir.glob("*.py"):
         print(f"Failed to load agent {agent_name}: {e}")
 
 # 兼容旧版的调用
-if "search" in AGENT_REGISTRY:
-    AGENT_REGISTRY["leo"] = AGENT_REGISTRY["search"]
-    AGENT_REGISTRY["anki"] = AGENT_REGISTRY["search"]
+if "find" in AGENT_REGISTRY:
+    AGENT_REGISTRY["leo"] = AGENT_REGISTRY["find"]
+    AGENT_REGISTRY["anki"] = AGENT_REGISTRY["find"]
 # =====================================================
 
 def main():

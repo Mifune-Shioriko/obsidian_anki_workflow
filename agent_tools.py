@@ -1,4 +1,5 @@
 import os
+import re
 import requests
 
 import ssl
@@ -37,7 +38,7 @@ load_dotenv(find_dotenv())
 ANKI_URL = os.getenv("ANKI_URL", "http://127.0.0.1:8765")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
-COLLECTION_NAME = "anki_cards"
+NOTES_COLLECTION = "atomic_notes"
 
 # 初始化客户端
 ai_client = genai.Client(api_key=GOOGLE_API_KEY)
@@ -56,10 +57,10 @@ def anki_request(action: str, params: dict = None):
         print(f"[Anki Connect Error] 无法连接到 Anki: {e}")
         return None
 
-def get_embedding(text: str) -> list[float]:
-    """调用 Gemini 生成文本向量 (必须与灌库时使用的模型一致)"""
+def get_note_embedding(text: str) -> list[float]:
+    """调用 Gemini 生成笔记向量 (gemini-embedding-2, 3072维, 匹配 atomic_notes 集合)"""
     response = ai_client.models.embed_content(
-        model="gemini-embedding-001", 
+        model="gemini-embedding-2",
         contents=text
     )
     return response.embeddings[0].values
@@ -136,75 +137,6 @@ def search_cards_by_keyword(keyword: str, only_new: bool = False, limit: int = 5
         result += f"- 卡片 ID: {card['cardId']} | 问题: {front} | 答案: {back}\n"
         
     return result
-
-def search_cards_by_topic(topic_query: str, only_new: bool = False, limit: int = 500) -> str:
-    """
-    根据核心主题词检索相关的 Anki 卡片。
-    支持通过 only_new 参数限定仅在新卡片中进行语义检索。
-    
-    Args:
-        topic_query: 检索的关键词或核心主题。(例如："物理学")
-        only_new: 是否仅在未学习的新卡片中检索。
-        limit: 需要返回的卡片最大数量，默认为 500。
-    """
-    try:
-        if not QDRANT_AVAILABLE:
-            return "检索向量数据库失败：未安装 qdrant_client 库，请先运行 pip install qdrant-client"
-
-        # 0. 检查是否限定新卡片并构建过滤器
-        query_filter = None
-        if only_new:
-            new_card_ids = anki_request("findCards", {"query": "is:new"})
-            if not new_card_ids:
-                return "当前没有任何新卡片可供检索。"
-            query_filter = models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key="card_id",
-                        match=models.MatchAny(any=new_card_ids)
-                    )
-                ]
-            )
-
-        # 1. 向量检索：先去 Qdrant 捞取相关的卡片
-        query_vector = get_embedding(topic_query)
-        
-        search_result = qdrant.query_points(
-            collection_name=COLLECTION_NAME,
-            query=query_vector,
-            query_filter=query_filter,
-            limit=limit,
-            score_threshold=0.3 
-        )
-
-        if not search_result.points:
-            return f"数据库中没有找到与核心主题 '{topic_query}' 足够相关的卡片。"
-
-        # 2. 提取命中的卡片 ID
-        hit_cards = []
-        for hit in search_result.points:
-            card_id = hit.payload.get('card_id')
-            if not card_id: continue
-            
-            hit_cards.append({
-                "card_id": int(card_id),
-                "question": hit.payload.get('question'),
-                "answer": hit.payload.get('answer'),
-                "score": hit.score
-            })
-
-        # 3. 组装返回给大模型的最终文本
-        result_text = f"找到了 {len(hit_cards)} 张关于 '{topic_query}' 的相关卡片：\n\n"
-        
-        for hit in hit_cards:
-            result_text += f"ID: {hit['card_id']}\n问题: {hit['question']}\n答案: {hit['answer']}\n(相关度: {hit['score']:.2f})\n---\n"
-
-        return result_text
-        
-    except Exception as e:
-        print(f"\n[Debug] 向量检索底层报错: {e}")
-        return f"检索向量数据库时发生错误: {e}"
-
 
 def add_tag_to_cards(card_ids: list[int], tag_name: str) -> str:
     """
@@ -300,5 +232,143 @@ def search_web(query: str, max_results: int = 3) -> str:
     except Exception as e:
         return f"网页搜索工具出错: {e}"
 
+
+def chain_search_notes(query: str, max_hops: int = 3, seed_limit: int = 5, max_total: int = 30, char_limit: int = 1500) -> list[dict]:
+    """
+    链式语义检索笔记：先向量检索找到种子笔记，再沿 ## 相关笔记 的 wiki-links 进行 BFS 展开。
+
+    Args:
+        query: 检索查询文本
+        max_hops: 最大链式展开跳数 (默认 3)
+        seed_limit: 向量检索返回的种子笔记数量 (默认 5)
+        max_total: 返回结果的最大笔记数 (默认 30)
+        char_limit: 每条笔记正文截断字符数 (默认 1500)
+
+    Returns:
+        [{title, path, score, hop, body_excerpt}] 按 score 降序排列
+    """
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import utils
+
+    if not QDRANT_AVAILABLE:
+        return []
+
+    try:
+        query_vector = get_note_embedding(query)
+    except Exception as e:
+        print(f"[Chain Search] Embedding 失败: {e}")
+        return []
+
+    try:
+        seed_result = qdrant.query_points(
+            collection_name=NOTES_COLLECTION,
+            query=query_vector,
+            limit=seed_limit,
+            score_threshold=0.6
+        )
+    except Exception as e:
+        print(f"[Chain Search] Qdrant 查询失败: {e}")
+        return []
+
+    if not seed_result.points:
+        return []
+
+    vault_index = utils.build_vault_index(utils.VAULT_DIR)
+    notes_dir = Path(utils.VAULT_DIR) / "Atomic Notes"
+    results = []
+    visited = set()
+    queue = []
+
+    for hit in seed_result.points:
+        rel_path = hit.payload.get("relative_path", "")
+        title = hit.payload.get("title", "")
+        if not rel_path:
+            continue
+        note_id = hit.payload.get("note_id", rel_path)
+        if note_id in visited:
+            continue
+        visited.add(note_id)
+        visited.add(title.lower())
+        entry = {
+            "title": title,
+            "path": rel_path,
+            "score": hit.score,
+            "hop": 0,
+            "via": None
+        }
+        results.append(entry)
+        queue.append(entry)
+
+    related_pattern = re.compile(r'\[\[([^\]|]+)(?:\|[^\]]+)?\]\]')
+
+    for hop in range(1, max_hops + 1):
+        if not queue or len(results) >= max_total:
+            break
+        next_queue = []
+        for parent in queue:
+            if len(results) >= max_total:
+                break
+            parent_path = notes_dir / parent["path"]
+            if not parent_path.exists():
+                continue
+            try:
+                content = parent_path.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            related_match = re.search(r'^##\s*(?:相关笔记|Related\s+Notes)\s*$', content, re.MULTILINE)
+            if not related_match:
+                continue
+            related_section = content[related_match.start():]
+            cards_match = re.search(r'^##\s*卡片\s*$', related_section, re.MULTILINE)
+            if cards_match:
+                related_section = related_section[:cards_match.start()]
+            links = related_pattern.findall(related_section)
+            for link_title in links:
+                if len(results) >= max_total:
+                    break
+                link_key = link_title.lower()
+                if link_key in visited:
+                    continue
+                link_file_key = link_key + ".md"
+                if link_file_key not in vault_index:
+                    continue
+                visited.add(link_key)
+                target_path = vault_index[link_file_key]
+                rel_path = str(target_path.relative_to(notes_dir))
+                entry = {
+                    "title": link_title,
+                    "path": rel_path,
+                    "score": parent["score"] * 0.7,
+                    "hop": hop,
+                    "via": parent["title"]
+                }
+                results.append(entry)
+                next_queue.append(entry)
+        queue = next_queue
+
+    yaml_strip = re.compile(r'^---\s*\n.*?\n---\s*\n', re.DOTALL)
+    section_strip = re.compile(r'^##\s*(?:相关笔记|Related\s+Notes|卡片)\s*$', re.MULTILINE)
+
+    for entry in results:
+        full_path = notes_dir / entry["path"]
+        if not full_path.exists():
+            entry["body_excerpt"] = ""
+            continue
+        try:
+            content = full_path.read_text(encoding="utf-8")
+        except Exception:
+            entry["body_excerpt"] = ""
+            continue
+        content = yaml_strip.sub("", content)
+        parts = section_strip.split(content)
+        body = parts[0] if parts else content
+        entry["body_excerpt"] = body.strip()[:char_limit]
+
+    results.sort(key=lambda x: x["score"], reverse=True)
+    return results
+
+
 # 将工具打包，准备在主程序中传给大模型
-agent_tools = [search_new_cards, search_cards_by_topic, search_cards_by_keyword, add_tag_to_cards, search_pubmed, search_web]
+agent_tools = [search_new_cards, search_cards_by_keyword, add_tag_to_cards, search_pubmed, search_web]
