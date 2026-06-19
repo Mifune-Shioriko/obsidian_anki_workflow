@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 .DS_Store
 .similarity_cache.json
+.vault_index.json
+.notebooklm_cache.json

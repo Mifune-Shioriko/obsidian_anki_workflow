@@ -18,9 +18,9 @@ Obsidian Vault
   (LLM API)        (向量检索)             (Anki 本地服务)
        │
        v
-  Multi-Agent Router
-  @default  @explain  @dig  @new
-  @add      @revise   @file @pubmed
+   Multi-Agent Router
+   @default  @explain  @dig  @grade
+   @quiz     @file
 ```
 
 ---
@@ -72,23 +72,21 @@ python router.py <笔记路径>
 
 | 命令 | 模块 | 功能 |
 |:---|:---|:---|
-| `@default` | `default.py` | 基础问答。自动解析 `[[双链]]` 加载关联笔记文本与图片二进制，支持 Google Search |
-| `@explain` | `explain.py` | 面向中学生的通俗讲解。强制使用生活类比引入概念，标注比喻边界，大白话翻译术语 |
-| `@dig` | `dig.py` | 知识提炼。剥离类比与闲聊，回归严谨学术表述，输出三级标题 + 单知识点 bullet points |
-| `@new` | `new.py` | 自动制卡。基于 `@dig` 的总结内容，逐条对应建卡后严格筛选前 10% 核心卡片，直接写入笔记 |
-| `@add` | `add.py` | 定向制卡。仅针对笔记中**加粗标记**的知识内容提炼卡片，50% 核心筛选，直接写入笔记 |
-| `@revise` | `revise.py` | 卡片修订。支持修改、拆分、新增卡片。草稿-确认双阶段协议，确认指令为 `ok` / `yes` / `y` / `确认` |
+| `@default` | `default.py` | 基础问答。自动解析 `[[双链]]` 加载关联笔记文本与图片二进制，集成 Google Search |
+| `@explain` | `explain.py` | 面向中学生的通俗讲解。加载双链笔记上下文与图片，支持 Google Search |
+| `@dig` | `dig.py` | 知识提炼。剥离类比与闲聊，回归严谨学术表述，输出三级标题 + 单知识点 bullet points。屏蔽图片以防过度挖掘细节 |
+| `@grade` | `grade.py` | 测验批改。批改用户提交的选择题测验（`- [x]` 标记），给出得分和逐题反馈 |
+| `@quiz` | `quiz.py` | 出题生成。根据对话历史出 5 道选择题（含单选和多选），考察知识掌握程度 |
 | `@file` | `file.py` | 文档知识库 (NotebookLM 模式)。自动提取对话中的文件路径，上传 PDF/PPTX 至 Gemini，基于文档内容问答。支持缓存与增量更新 |
-| `@pubmed` | `pubmed.py` | 医学文献检索。组合使用网页搜索 + PubMed (NCBI) 学术验证，强制 PMID 超链接引用，严禁捏造文献 |
 
 #### 典型链式管道：幻灯片自动处理
 
 ```
-@explain → @dig → @new
-通俗讲解    知识提炼    自动制卡
+@explain → @dig
+通俗讲解    知识提炼
 ```
 
-这是系统最核心的工作流：先让 AI 用通俗语言讲解幻灯片内容，再提炼为严谨的知识点短句，最后从中筛选核心卡片直接写入笔记。
+这是系统最核心的工作流：先让 AI 用通俗语言讲解幻灯片内容，再提炼为严谨的知识点短句。
 
 ### 4. 自动幻灯片处理器 (`auto_slide_processor.py`)
 
@@ -100,7 +98,7 @@ python auto_slide_processor.py <幻灯片路径> [-s 起始页] [-e 结束页] [
 
 - **结构预分析**：调用 Gemini 对每页 Slide 进行结构化分类（封面 / 目录 / 过渡页 / 结束页 / 内容页），自动跳过无学术价值的页面
 - **交互式确认**：展示分析规划，用户可回车确认、自定义页码或退出
-- **全自动流水线**：逐页渲染高清 PNG → 挂载到 Daily Note → 触发 `@explain @dig @new` 链式管道 → 调用 `daily_to_atomic.py` 打包为原子笔记
+- **全自动流水线**：逐页渲染高清 PNG → 挂载到 Daily Note → 触发 `@explain @dig` 链式管道 → 调用 `daily_to_atomic.py` 打包为原子笔记
 - **PPTX 支持**：通过 LibreOffice Headless 自动将 PPTX 转换为 PDF
 - **错误回滚**：任何环节失败自动还原 Daily Note 并清理临时文件
 
@@ -141,7 +139,7 @@ python solve_hw.py <作业文件路径>
 - **统一网关**：`model_client.Client` 根据调用来源（Agent 名称 / 脚本名称）自动选择模型服务商
 - **按 Agent 配置**：每个 Agent 和脚本可独立指定使用 `gemini` 或 `qwen`（通过 `AGENT_XXX_PROVIDER` 环境变量）
 - **Qwen 兼容层**：完整实现了 Gemini SDK 的 `models`、`files`、`chats` API 到 Qwen (DashScope) OpenAI 兼容接口的适配，包括 Tool Function Calling、Pydantic Schema 结构化输出、多模态图片压缩传输
-- **默认推荐**：文本类 Agent（`@default`、`@explain`、`@dig`、`@add`、`@new`、`@revise`）默认使用 Qwen；需要文档/多模态能力的 Agent（`@file`、`@pubmed`、`solve_hw.py`）默认绑定 Gemini
+- **默认推荐**：文本类 Agent（`@default`、`@explain`、`@dig`、`@grade`、`@quiz`）默认使用 Qwen；需要文档/多模态能力的 Agent（`@file`、`solve_hw.py`）默认绑定 Gemini
 
 ---
 
@@ -246,7 +244,6 @@ QWEN_MODEL_NAME=qwen3.7-plus
 # 各 Agent 模型路由 (可选)
 AGENT_DEFAULT_PROVIDER=qwen
 AGENT_FILE_PROVIDER=gemini
-AGENT_PUBMED_PROVIDER=gemini
 SCRIPT_SOLVE_HW_PROVIDER=gemini
 
 # Anki 配置 (可选, 有默认值)
@@ -283,11 +280,9 @@ QDRANT_URL=http://localhost:6333
 │   ├── default.py              # 基础问答 Agent
 │   ├── explain.py              # 通俗讲解 Agent
 │   ├── dig.py                  # 知识提炼 Agent
-│   ├── new.py                  # 自动制卡 Agent
-│   ├── add.py                  # 定向制卡 Agent
-│   ├── revise.py               # 卡片修订 Agent
-│   ├── file.py                 # 文档知识库 Agent
-│   └── pubmed.py               # 医学文献检索 Agent
+│   ├── grade.py                # 测验批改 Agent
+│   ├── quiz.py                 # 出题生成 Agent
+│   └── file.py                 # 文档知识库 Agent
 ├── anki_card_templates/        # Anki 卡片 HTML/CSS 模板
 ├── sync.py                     # 单笔记同步引擎
 ├── sync_all.py                 # 全量批量同步引擎
@@ -298,7 +293,10 @@ QDRANT_URL=http://localhost:6333
 ├── similarity_manager.py       # 语义相似度织网引擎
 ├── auto_slide_processor.py     # 幻灯片全自动处理器
 ├── solve_hw.py                 # 智能作业求解器
-├── utils.py                    # 核心工具库 (文档解析, 格式化, Vault 索引)
+├── utils.py                    # 核心工具库 (文档解析, 格式化)
+├── vault_index.py              # Vault 索引构建 (带持久化缓存)
+├── fix_math.py                 # LaTeX 公式修复工具
+├── fix_md.py                   # Markdown 公式清理脚本
 ├── run_similarity.sh           # 语义关联一键启动脚本
 ├── .env.example                # 环境变量模板
 └── DOCUMENTATION.md            # 详细技术手册

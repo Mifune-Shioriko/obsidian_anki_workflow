@@ -103,14 +103,14 @@ def render_markdown_safely(text, add_spacing=False):
     # 核心修复：占位符绝对不能包含下划线(_)或星号(*)等 Markdown 保留字
     def block_math_repl(match):
         key = f"MATHBLOCKPLACEHOLDER{len(math_placeholders)}K"
-        # 直接使用标准的 Anki 块级公式语法 \\[ ... \]
-        math_placeholders[key] = f"\\[{match.group(1)}\\]"
+        safe_content = match.group(1).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        math_placeholders[key] = f"\\[{safe_content}\\]"
         return key
 
     def inline_math_repl(match):
         key = f"MATHINLINEPLACEHOLDER{len(math_placeholders)}K"
-        # 直接使用标准的 Anki 内联公式语法 \( ... \)
-        math_placeholders[key] = f"\\({match.group(1)}\\)"
+        safe_content = match.group(1).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        math_placeholders[key] = f"\\({safe_content}\\)"
         return key
 
     # 1. 提取公式并替换为占位符 (优先提取块级，再提取内联)

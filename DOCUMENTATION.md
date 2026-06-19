@@ -112,16 +112,12 @@
 
 | Agent 命令 | 模块文件 | 核心职责 | 技术实现细节 |
 | :--- | :--- | :--- | :--- |
-| `@default` | `default.py` | 基础问答与多模态双链加载 | 构建 `build_vault_index` 寻找提问中的 `[[笔记名]]`，自动读取内容并提取关联图片二进制传输。 |
-| `@add` | `add.py` | 纯新增 Anki 记忆卡片 | 草稿-确认双阶段模式。调用 Gemini 生成卡片草稿 JSON 表格。回复 `@add ok` 后通过 `rewrite_markdown_table` 追加至笔记底部卡片表格。 |
-| `@revise` | `revise.py` | 修改、拆分与维护现有卡片 | 草稿-确认双阶段模式。在 Anki 复习模式下运行能自动提取当前复习卡片的 ID 上下文进行精准修订。 |
-| `@tag` | `tag.py` | 卡片打标签专员 | 自动结合上下文提取卡片 ID，支持 Tool Function 调用批量修改 Anki 端的卡片分类标签。 |
-| `@pubmed` | `pubmed.py` | 医学与边缘学术理论严谨论证 | 先通过 `search_web` 定位理论或网红医生的主张，再通过 `search_pubmed` (NCBI Web Service) 抓取学术文献。强制要求输出 PMID 超链接，严禁捏造学术编号。 |
+| `@default` | `default.py` | 基础问答与多模态双链加载 | 构建 `build_vault_index` 寻找提问中的 `[[笔记名]]`，自动读取内容并提取关联图片二进制传输。集成 Google Search 工具。 |
+| `@explain` | `explain.py` | 面向中学生的通俗讲解 | 加载双链笔记上下文与图片，使用生活类比辅助理解。集成 Google Search 工具。 |
+| `@dig` | `dig.py` | 知识提炼与原子化总结 | 剥离类比与闲聊，回归严谨学术表述。输出三级标题 + 单知识点 bullet points。屏蔽图片以防过度挖掘细节。 |
+| `@grade` | `grade.py` | 选择题测验批改 | 批改用户以 `- [x]` 标记的选择题，给出得分和逐题反馈。 |
+| `@quiz` | `quiz.py` | 选择题生成 | 根据对话历史出 5 道选择题（含单选和多选），考察知识掌握程度。 |
 | `@file` | `file.py` | 多文档知识库 NotebookLM | 使用绝对路径提取及 LibreOffice 转换机制。对多 PDF/PPTX 上传并缓存在 `.notebooklm_cache.json` 中，提供纯粹基于专属库的问答。 |
-| `@reading_suggestions` | `reading_suggestions.py` | 知识脱水与延伸学习领航员 | 向 Anki 请求今日已复习卡片（`rated:1`），通过提炼零散的卡片骨架，输出血肉填充深读指南，并提出 3-4 个教材才能解答的靶向深层问题。 |
-| `@new_overview` | `new_overview.py` | 新学知识梳理与脉络复盘 | 抓取今日在 Anki 中首次引入的新学卡片（`introduced:1`），为用户提炼成宏观逻辑脉络。 |
-| `@review_overview` | `review_overview.py` | 每日复习内容宏观自测总结 | 抓取今日所有评过分的卡片内容，进行一站式逻辑梳理与自测回顾。 |
-| `@map` | `map.py` | 认知边界拓展与盲区预测导师 | 基于用户特定主题检索卡片（宽泛主题用向量检索，具体词汇用普通检索），评估学习层级，并预测该主题下的学习盲区，给出建议。 |
 
 ---
 

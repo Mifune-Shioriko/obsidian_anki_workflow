@@ -3,6 +3,7 @@ import re
 from pathlib import Path
 import requests
 from dotenv import load_dotenv
+import vault_index
 
 # ================= 1. 环境变量与全局配置 =================
 # 优先读取当前目录的 .env
@@ -371,22 +372,11 @@ def rewrite_markdown_table(file_path, original_content, updated_cards):
 # ================= 4. Vault 索引与上下文提取 =================
 def build_vault_index(vault_dir):
     """
-    预先构建 Obsidian 库的文件索引，跳过隐藏文件夹，避免重复的 rglob 扫描。
-    返回结构: {'文件名.md': Path对象, '图片.png': Path对象, ...}
+    构建 Obsidian 库的文件索引（带持久化缓存，增量更新）。
+    返回结构: {'文件名.md': '/完整/路径/文件名.md', '图片.png': '/完整/路径/图片.png', ...}
     """
-    index = {}
-    if not vault_dir: return index
-    vault_path = Path(vault_dir).expanduser()
-    
-    for root, dirs, files in os.walk(vault_path):
-        # 实时修改 dirs 列表，直接阻止 os.walk 进入这些耗时的隐藏目录
-        dirs[:] = [d for d in dirs if d not in ['.obsidian', '.trash', '.git']]
-        
-        for file in files:
-            # 存储格式：如果文件叫 test.md，字典的 key 就是 'test.md'
-            index[file.lower()] = Path(root) / file
-            
-    return index
+    index = vault_index.get_vault_index(vault_dir)
+    return {k: Path(v) for k, v in index.items()}
 
 def extract_linked_context(text, vault_index):
     """
